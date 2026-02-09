@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Optimized viewport for iOS to prevent scaling on input focus and handle notch areas -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Evopals Life Hub V15 - Multi-Pet Lab & Admin</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
@@ -13,7 +14,15 @@
 
     <style>
         [x-cloak] { display: none !important; }
-        body { margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; height: 100vh; }
+        
+        /* Ensure the body fills the viewport including iOS notch areas */
+        body { 
+            margin: 0; 
+            font-family: 'Inter', sans-serif; 
+            overflow: hidden; 
+            height: 100vh;
+            height: -webkit-fill-available; /* Fix for mobile Safari height */
+        }
         
         .float { animation: float 3s ease-in-out infinite; }
         @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-15px); } }
@@ -28,11 +37,14 @@
         }
         @keyframes gradientMove { 0% { background-position: 0% 50% } 50% { background-position: 100% 50% } 100% { background-position: 0% 50% } }
         
-        .glass { background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.2); }
-        .glass-dark { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .glass { background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.2); }
+        .glass-dark { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.1); }
         
         .nav-active { background: white !important; color: black !important; box-shadow: 0 15px 30px rgba(0,0,0,0.3); transform: translateY(-10px); }
         
+        /* Prevent gray highlight on tap in iOS */
+        * { -webkit-tap-highlight-color: transparent; }
+
         .calc-btn { transition: all 0.1s; border: 1px solid rgba(255,255,255,0.1); }
         .calc-btn:active { transform: scale(0.9); background: white; color: black; }
 
@@ -43,6 +55,9 @@
         }
 
         .no-scrollbar::-webkit-scrollbar { display: none; }
+        
+        /* iOS Safe Area spacing for the nav bar */
+        nav { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
     </style>
 
     <script>
@@ -53,7 +68,6 @@
             
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'evopals-v15-multipet';
 
-        // Only attempt Firebase init if config is valid (prevents crash in local text docs)
         let db = null;
         let auth = null;
         if (firebaseConfig.apiKey !== "local") {
@@ -67,38 +81,26 @@
                 screen: 'loading',
                 activeTab: 'planner',
                 userId: null,
-                
                 petName: 'Nova',
                 petEmoji: '🐱',
                 petSpecies: ['🐱', '🐶', '🦊', '🐸', '🐼', '🐲', '🦄'],
                 petIndex: 0,
-                
                 level: 1,
                 xp: 0,
                 hearts: [],
                 currentTheme: 'theme-default',
-                
                 selectedDate: new Date(),
                 weekDates: [],
                 allData: {}, 
                 recurring: { 'Monday': [], 'Tuesday': [], 'Wednesday': [], 'Thursday': [], 'Friday': [], 'Saturday': [], 'Sunday': [] },
-                
                 showAddModal: false,
                 modalType: 'task',
                 newInput: '',
                 newExtra: '',
                 isRecurring: false,
-
-                // Admin Settings
-                adminLocked: {
-                    planner: false,
-                    arcade: false,
-                    character: false
-                },
+                adminLocked: { planner: false, arcade: false, character: false },
                 adminVisible: false,
                 adminClickCount: 0,
-
-                // Tools
                 activeTool: null,
                 calcDisplay: '0',
                 compassHeading: 0,
@@ -106,7 +108,6 @@
                 init() {
                     this.updateWeek();
                     
-                    // If no Firebase (local doc), skip auth and show dashboard
                     if (!auth) {
                         setTimeout(() => { this.screen = 'dashboard'; }, 1000);
                         return;
@@ -125,6 +126,14 @@
                             } catch(e) { this.screen = 'dashboard'; }
                         }
                     });
+
+                    // iOS Compass Permission Check
+                    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                        // For iOS 13+ we need explicit permission for the compass
+                        window.addEventListener('click', () => {
+                            DeviceOrientationEvent.requestPermission().catch(console.error);
+                        }, { once: true });
+                    }
 
                     if (window.DeviceOrientationEvent) {
                         window.addEventListener('deviceorientation', (e) => {
@@ -302,7 +311,7 @@
 
     <div x-show="screen!=='loading'" x-cloak class="h-screen flex flex-col max-w-xl mx-auto relative">
         
-        <header class="p-6 pb-2 flex items-center justify-between z-50">
+        <header class="p-6 pb-2 pt-10 md:pt-6 flex items-center justify-between z-50">
             <h1 class="text-2xl font-black italic tracking-tighter">EVOPALS</h1>
             <button @click.stop="currentTheme = currentTheme === 'theme-default' ? 'theme-midnight' : 'theme-default'" class="glass w-12 h-12 rounded-2xl flex items-center justify-center">🎨</button>
         </header>
@@ -404,7 +413,6 @@
 
                     <div class="w-full space-y-4">
                         <div class="text-center">
-                            <!-- SECRET ADMIN TRIGGER: Tap name 5 times -->
                             <div @click="triggerAdmin()" class="cursor-pointer select-none">
                                 <div class="bg-transparent text-center text-4xl font-black italic outline-none w-full mb-2 uppercase select-none" x-text="petName"></div>
                                 <p class="text-[10px] font-black uppercase tracking-[0.5em] opacity-40">Soul Identity</p>
@@ -423,7 +431,6 @@
                     </div>
                 </div>
 
-                <!-- HIDDEN ADMIN SETTINGS -->
                 <div x-show="adminVisible" x-transition.scale.origin.bottom class="glass p-8 rounded-[3rem] space-y-4 border-2 border-red-500/20">
                     <div class="flex justify-between items-center mb-2">
                         <h4 class="text-xs font-black uppercase tracking-widest text-red-400">Administrative Terminal</h4>
@@ -482,19 +489,21 @@
             </div>
         </div>
 
-        <nav class="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-sm glass rounded-[2.5rem] p-3 flex justify-between shadow-2xl z-[150]">
-            <button @click="activeTab = 'planner'" class="flex-1 py-4 rounded-[1.8rem] flex flex-col items-center gap-1 transition-all" :class="activeTab === 'planner' ? 'nav-active' : 'opacity-40'">
-                <span class="text-xl">🏠</span>
-                <span class="text-[8px] font-black uppercase tracking-widest">Hub</span>
-            </button>
-            <button @click="activeTab = 'arcade'" class="flex-1 py-4 rounded-[1.8rem] flex flex-col items-center gap-1 transition-all" :class="activeTab === 'arcade' ? 'nav-active' : 'opacity-40'">
-                <span class="text-xl">🛠️</span>
-                <span class="text-[8px] font-black uppercase tracking-widest">Deck</span>
-            </button>
-            <button @click="activeTab = 'character'" class="flex-1 py-4 rounded-[1.8rem] flex flex-col items-center gap-1 transition-all" :class="activeTab === 'character' ? 'nav-active' : 'opacity-40'">
-                <span class="text-xl">🐾</span>
-                <span class="text-[8px] font-black uppercase tracking-widest">Lab</span>
-            </button>
+        <nav class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full glass p-3 flex justify-between shadow-2xl z-[150]">
+            <div class="flex w-[90%] max-w-sm mx-auto justify-between gap-2">
+                <button @click="activeTab = 'planner'" class="flex-1 py-4 rounded-[1.8rem] flex flex-col items-center gap-1 transition-all" :class="activeTab === 'planner' ? 'nav-active' : 'opacity-40'">
+                    <span class="text-xl">🏠</span>
+                    <span class="text-[8px] font-black uppercase tracking-widest">Hub</span>
+                </button>
+                <button @click="activeTab = 'arcade'" class="flex-1 py-4 rounded-[1.8rem] flex flex-col items-center gap-1 transition-all" :class="activeTab === 'arcade' ? 'nav-active' : 'opacity-40'">
+                    <span class="text-xl">🛠️</span>
+                    <span class="text-[8px] font-black uppercase tracking-widest">Deck</span>
+                </button>
+                <button @click="activeTab = 'character'" class="flex-1 py-4 rounded-[1.8rem] flex flex-col items-center gap-1 transition-all" :class="activeTab === 'character' ? 'nav-active' : 'opacity-40'">
+                    <span class="text-xl">🐾</span>
+                    <span class="text-[8px] font-black uppercase tracking-widest">Lab</span>
+                </button>
+            </div>
         </nav>
 
     </div>
