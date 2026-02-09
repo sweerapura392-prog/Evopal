@@ -1,233 +1,502 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Evopals Life Hub V4</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
-<style>
-[x-cloak]{display:none!important;}
-body{margin:0;font-family:sans-serif;overflow-x:hidden;}
-.float{animation:float 3s ease-in-out infinite;}
-@keyframes float{0%,100%{transform:translateY(0);}50%{transform:translateY(-12px);}}
-.gradient-bg{background: linear-gradient(135deg,#f472b6,#7c3aed,#3b82f6);background-size:400% 400%;animation:gradient 8s ease infinite;position:relative;overflow:hidden;}
-@keyframes gradient{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
-.glass{background: rgba(255,255,255,0.1);backdrop-filter: blur(16px);}
-.task-done{text-decoration:line-through;opacity:0.5;}
-.particle{position:absolute;border-radius:50%;opacity:0.3;animation:floatParticle 10s linear infinite;}
-@keyframes floatParticle{0%{transform:translateY(0) translateX(0);}50%{transform:translateY(-50px) translateX(20px);}100%{transform:translateY(0) translateX(0);}}
-.modal-bg{background:rgba(0,0,0,0.6);}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evopals Life Hub V15 - Multi-Pet Lab & Admin</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <style>
+        [x-cloak] { display: none !important; }
+        body { margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; height: 100vh; }
+        
+        .float { animation: float 3s ease-in-out infinite; }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-15px); } }
+        
+        .theme-default { --bg-1: #ff75c3; --bg-2: #ffa647; --bg-3: #7043ff; --accent: #fff; }
+        .theme-midnight { --bg-1: #060b19; --bg-2: #1e1b4b; --bg-3: #000000; --accent: #22d3ee; }
+
+        .gradient-bg {
+            background: linear-gradient(135deg, var(--bg-1), var(--bg-2), var(--bg-3));
+            background-size: 400% 400%;
+            animation: gradientMove 15s ease infinite;
+        }
+        @keyframes gradientMove { 0% { background-position: 0% 50% } 50% { background-position: 100% 50% } 100% { background-position: 0% 50% } }
+        
+        .glass { background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.2); }
+        .glass-dark { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        
+        .nav-active { background: white !important; color: black !important; box-shadow: 0 15px 30px rgba(0,0,0,0.3); transform: translateY(-10px); }
+        
+        .calc-btn { transition: all 0.1s; border: 1px solid rgba(255,255,255,0.1); }
+        .calc-btn:active { transform: scale(0.9); background: white; color: black; }
+
+        .heart-pop { animation: heartPop 0.6s ease-out forwards; position: absolute; pointer-events: none; z-index: 50; }
+        @keyframes heartPop { 
+            0% { transform: translateY(0) scale(0.5); opacity: 1; } 
+            100% { transform: translateY(-50px) scale(1.5); opacity: 0; } 
+        }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+
+    <script>
+        // Fallback logic for local execution outside of the Canvas environment
+        const firebaseConfig = typeof __firebase_config !== 'undefined' 
+            ? JSON.parse(__firebase_config) 
+            : { apiKey: "local", authDomain: "local", projectId: "local" };
+            
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'evopals-v15-multipet';
+
+        // Only attempt Firebase init if config is valid (prevents crash in local text docs)
+        let db = null;
+        let auth = null;
+        if (firebaseConfig.apiKey !== "local") {
+            if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+            auth = firebase.auth();
+            db = firebase.firestore();
+        }
+
+        window.evopals = function() {
+            return {
+                screen: 'loading',
+                activeTab: 'planner',
+                userId: null,
+                
+                petName: 'Nova',
+                petEmoji: '🐱',
+                petSpecies: ['🐱', '🐶', '🦊', '🐸', '🐼', '🐲', '🦄'],
+                petIndex: 0,
+                
+                level: 1,
+                xp: 0,
+                hearts: [],
+                currentTheme: 'theme-default',
+                
+                selectedDate: new Date(),
+                weekDates: [],
+                allData: {}, 
+                recurring: { 'Monday': [], 'Tuesday': [], 'Wednesday': [], 'Thursday': [], 'Friday': [], 'Saturday': [], 'Sunday': [] },
+                
+                showAddModal: false,
+                modalType: 'task',
+                newInput: '',
+                newExtra: '',
+                isRecurring: false,
+
+                // Admin Settings
+                adminLocked: {
+                    planner: false,
+                    arcade: false,
+                    character: false
+                },
+                adminVisible: false,
+                adminClickCount: 0,
+
+                // Tools
+                activeTool: null,
+                calcDisplay: '0',
+                compassHeading: 0,
+
+                init() {
+                    this.updateWeek();
+                    
+                    // If no Firebase (local doc), skip auth and show dashboard
+                    if (!auth) {
+                        setTimeout(() => { this.screen = 'dashboard'; }, 1000);
+                        return;
+                    }
+
+                    auth.onAuthStateChanged(async (user) => {
+                        if (user) {
+                            this.userId = user.uid;
+                            await this.loadAllData();
+                            setTimeout(() => { this.screen = 'dashboard'; }, 1000);
+                        } else {
+                            try {
+                                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                                    await auth.signInWithCustomToken(__initial_auth_token);
+                                } else { await auth.signInAnonymously(); }
+                            } catch(e) { this.screen = 'dashboard'; }
+                        }
+                    });
+
+                    if (window.DeviceOrientationEvent) {
+                        window.addEventListener('deviceorientation', (e) => {
+                            this.compassHeading = e.webkitCompassHeading || (360 - e.alpha);
+                        });
+                    }
+                },
+
+                triggerAdmin() {
+                    this.adminClickCount++;
+                    if (this.adminClickCount >= 5) {
+                        this.adminVisible = true;
+                        this.adminClickCount = 0;
+                    }
+                },
+
+                updateWeek() {
+                    const curr = new Date(this.selectedDate);
+                    const day = curr.getDay();
+                    const diff = curr.getDate() - day + (day === 0 ? -6 : 1);
+                    const first = new Date(curr.setDate(diff));
+                    this.weekDates = [];
+                    for(let i=0; i<7; i++) {
+                        const d = new Date(first);
+                        d.setDate(first.getDate() + i);
+                        this.weekDates.push(d);
+                    }
+                },
+
+                get dateKey() { return this.selectedDate.toISOString().split('T')[0]; },
+                get dayDisplay() { return this.selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }); },
+
+                get currentDayData() {
+                    const data = this.allData[this.dateKey] || { tasks: [], events: [] };
+                    const dayName = this.selectedDate.toLocaleDateString('en-US', { weekday: 'long' });
+                    const recurringForDay = this.recurring[dayName] || [];
+                    const mergedTasks = [...(data.tasks || [])];
+                    recurringForDay.forEach(rt => {
+                        if (!mergedTasks.find(t => t.recurringId === rt.id)) {
+                            mergedTasks.push({ ...rt, recurringId: rt.id, id: 'rec-' + rt.id + '-' + this.dateKey });
+                        }
+                    });
+                    return { ...data, tasks: mergedTasks };
+                },
+
+                async loadAllData() {
+                    if (!db || !this.userId) return;
+                    const doc = await db.collection('artifacts').doc(appId).collection('users').doc(this.userId).collection('data').doc('master').get();
+                    if (doc.exists) {
+                        const data = doc.data();
+                        this.allData = data.allData || {};
+                        this.recurring = data.recurring || this.recurring;
+                        this.petName = data.petName || 'Nova';
+                        this.petEmoji = data.petEmoji || '🐱';
+                        this.level = data.level || 1;
+                        this.xp = data.xp || 0;
+                        this.currentTheme = data.currentTheme || 'theme-default';
+                        this.adminLocked = data.adminLocked || { planner: false, arcade: false, character: false };
+                        this.petIndex = this.petSpecies.indexOf(this.petEmoji);
+                        if (this.petIndex === -1) this.petIndex = 0;
+                    }
+                },
+
+                async sync() {
+                    if (!db || !this.userId) return;
+                    await db.collection('artifacts').doc(appId).collection('users').doc(this.userId).collection('data').doc('master').set({
+                        allData: this.allData, recurring: this.recurring, petName: this.petName,
+                        petEmoji: this.petEmoji, level: this.level, xp: this.xp, currentTheme: this.currentTheme,
+                        adminLocked: this.adminLocked
+                    }, { merge: true });
+                },
+
+                cyclePet(dir) {
+                    this.petIndex = (this.petIndex + dir + this.petSpecies.length) % this.petSpecies.length;
+                    this.petEmoji = this.petSpecies[this.petIndex];
+                    this.sync();
+                },
+
+                selectDate(d) {
+                    this.selectedDate = new Date(d);
+                    this.updateWeek();
+                },
+
+                openModal(type) {
+                    this.modalType = type;
+                    this.newInput = '';
+                    this.newExtra = '';
+                    this.isRecurring = false;
+                    this.showAddModal = true;
+                },
+
+                addItem() {
+                    if (!this.newInput.trim()) return;
+                    const item = { id: Date.now(), title: this.newInput, completed: false };
+                    const dayName = this.selectedDate.toLocaleDateString('en-US', { weekday: 'long' });
+                    
+                    if (this.modalType === 'task') {
+                        if (this.isRecurring) { 
+                            this.recurring[dayName].push(item); 
+                        } else {
+                            if (!this.allData[this.dateKey]) this.allData[this.dateKey] = { tasks: [], events: [] };
+                            this.allData[this.dateKey].tasks.push(item);
+                        }
+                    } else {
+                        if (!this.allData[this.dateKey]) this.allData[this.dateKey] = { tasks: [], events: [] };
+                        item.time = this.newExtra || 'All Day';
+                        this.allData[this.dateKey].events.push(item);
+                    }
+                    this.showAddModal = false;
+                    this.sync();
+                },
+
+                toggleItem(type, id) {
+                    const idNum = Date.now();
+                    this.hearts.push({ id: idNum, x: Math.random() * 60 + 20 });
+                    setTimeout(() => { this.hearts = this.hearts.filter(h => h.id !== idNum); }, 600);
+
+                    if (this.allData[this.dateKey] && this.allData[this.dateKey][type]) {
+                        const item = this.allData[this.dateKey][type].find(i => i.id === id);
+                        if (item) {
+                            item.completed = !item.completed;
+                            if (item.completed) this.gainXP(15);
+                            this.sync(); return;
+                        }
+                    }
+                    if (type === 'tasks' && String(id).startsWith('rec-')) {
+                        const originalId = parseInt(id.split('-')[1]);
+                        const dayName = this.selectedDate.toLocaleDateString('en-US', { weekday: 'long' });
+                        const originalTask = this.recurring[dayName].find(t => t.id === originalId);
+                        if (originalTask) {
+                            if (!this.allData[this.dateKey]) this.allData[this.dateKey] = { tasks: [], events: [] };
+                            this.allData[this.dateKey].tasks.push({ ...originalTask, recurringId: originalId, completed: true, id: id });
+                            this.gainXP(15);
+                            this.sync();
+                        }
+                    }
+                },
+
+                deleteItem(type, id) {
+                    if (String(id).startsWith('rec-')) {
+                        const originalId = parseInt(id.split('-')[1]);
+                        const dayName = this.selectedDate.toLocaleDateString('en-US', { weekday: 'long' });
+                        this.recurring[dayName] = this.recurring[dayName].filter(t => t.id !== originalId);
+                    } else if (this.allData[this.dateKey]) {
+                        this.allData[this.dateKey][type] = (this.allData[this.dateKey][type] || []).filter(i => i.id !== id);
+                    }
+                    this.sync();
+                },
+
+                gainXP(amount) {
+                    this.xp += amount;
+                    if (this.xp >= 100) { this.level++; this.xp = 0; }
+                },
+
+                calcInput(val) {
+                    if (this.calcDisplay === '0') this.calcDisplay = val;
+                    else this.calcDisplay += val;
+                },
+                calcClear() { this.calcDisplay = '0'; },
+                calcResult() {
+                    try { this.calcDisplay = eval(this.calcDisplay.replace('×', '*').replace('÷', '/')).toString(); }
+                    catch (e) { this.calcDisplay = 'Error'; }
+                }
+            }
+        }
+    </script>
 </head>
-<body x-data="evopals()" x-init="init()">
+<body x-data="evopals()" x-init="init()" :class="currentTheme" class="gradient-bg text-white overflow-hidden">
 
-<!-- LOADING SCREEN -->
-<div x-show="screen==='loading'" class="fixed inset-0 gradient-bg flex flex-col items-center justify-center z-50">
-  <div class="text-8xl float drop-shadow-2xl" x-text="petEmoji"></div>
-  <h1 class="mt-6 text-4xl font-extrabold tracking-widest">EVOPALS</h1>
-  <p class="mt-4 text-sm tracking-[0.3em] animate-pulse">PREPARING YOUR LIFE</p>
-</div>
-
-<!-- APP CONTAINER -->
-<div x-show="screen!=='loading'" class="h-screen flex flex-col relative gradient-bg overflow-hidden">
-
-<!-- Particle Background -->
-<template x-for="n in 30">
-  <div class="particle" :style="`width:${2+Math.random()*8}px;height:${2+Math.random()*8}px;top:${Math.random()*100}%;left:${Math.random()*100}%`"></div>
-</template>
-
-<!-- HEADER -->
-<header class="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-purple-800 to-indigo-800 z-50 relative">
-<h2 class="font-bold text-lg text-white">Evopals Life Hub</h2>
-<div class="flex items-center gap-3">
-  <div class="text-sm text-white">Lvl <span x-text="level"></span></div>
-  <!-- Dropdown Menu Trigger -->
-  <div class="relative" x-data="{open:false}" class="z-50">
-    <button @click="open=!open" class="text-white text-xl font-bold">⚙️</button>
-    <div x-show="open" @click.outside="open=false" x-cloak class="absolute right-0 mt-2 w-56 bg-white/10 backdrop-blur-lg rounded-xl shadow-lg p-4 space-y-2 z-[999]">
-      <h3 class="font-bold text-white text-sm">Settings & Customize</h3>
-      <button @click="showPetCustomization=true; open=false;playSound('custom')" class="w-full py-2 px-3 bg-blue-500 text-white rounded">Customize Pet</button>
-      <button @click="changeTheme(); open=false;playSound('theme')" class="w-full py-2 px-3 bg-green-500 text-white rounded">Change Background Theme</button>
-      <button @click="screen='games'; open=false;playSound('game')" class="w-full py-2 px-3 bg-purple-500 text-white rounded">Mini Games</button>
+    <!-- Loading -->
+    <div x-show="screen==='loading'" class="fixed inset-0 gradient-bg flex flex-col items-center justify-center z-[500]">
+        <div class="text-[8rem] float" x-text="petEmoji"></div>
+        <h1 class="mt-8 text-4xl font-black italic tracking-tighter">EVOPALS</h1>
     </div>
-  </div>
-</div>
-</header>
 
-<main class="flex-1 overflow-y-auto p-5 z-10 relative">
+    <div x-show="screen!=='loading'" x-cloak class="h-screen flex flex-col max-w-xl mx-auto relative">
+        
+        <header class="p-6 pb-2 flex items-center justify-between z-50">
+            <h1 class="text-2xl font-black italic tracking-tighter">EVOPALS</h1>
+            <button @click.stop="currentTheme = currentTheme === 'theme-default' ? 'theme-midnight' : 'theme-default'" class="glass w-12 h-12 rounded-2xl flex items-center justify-center">🎨</button>
+        </header>
 
-<!-- DASHBOARD -->
-<div x-show="screen==='dashboard'" class="space-y-6">
+        <main class="flex-1 overflow-y-auto px-4 pb-32 no-scrollbar">
+            
+            <!-- HUB TAB -->
+            <div x-show="activeTab === 'planner'" class="relative h-full space-y-6 pt-2 animate-in fade-in duration-300">
+                <template x-if="adminLocked.planner">
+                    <div class="absolute inset-0 z-[100] flex flex-col items-center justify-center glass rounded-[3rem] text-center p-8 backdrop-blur-3xl">
+                        <span class="text-6xl mb-4">🔒</span>
+                        <h2 class="text-3xl font-black italic uppercase">Feature coming soon</h2>
+                        <p class="opacity-50 text-[10px] font-bold uppercase tracking-widest mt-2">Maintenance in progress</p>
+                    </div>
+                </template>
 
-<!-- Pet Card -->
-<div class="glass rounded-3xl p-6 text-center relative">
-<div class="text-7xl float" x-text="currentPetEmoji"></div>
-<h3 class="mt-3 font-bold text-xl text-white" x-text="petName"></h3>
-<p class="text-xs opacity-70 mt-1 text-white" x-text="petMoodText"></p>
-<div class="mt-4 flex justify-center gap-1">
-<template x-for="i in 4">
-<div class="w-6 h-2 rounded-full" :class="i <= xp/25 ? 'bg-green-400' : 'bg-white/20'"></div>
-</template>
-</div>
-</div>
+                <div class="p-8 rounded-[3rem] flex flex-col items-center text-center relative" :class="currentTheme === 'theme-midnight' ? 'glass-dark' : 'glass'">
+                    <div class="relative mb-4">
+                        <div class="text-[6rem] float drop-shadow-2xl" x-text="petEmoji"></div>
+                        <template x-for="heart in hearts" :key="heart.id">
+                            <div class="heart-pop text-2xl" :style="`left: ${heart.x}%`" x-text="'❤️'"></div>
+                        </template>
+                    </div>
+                    <h2 class="text-3xl font-black italic tracking-tighter" x-text="petName"></h2>
+                    <div class="w-full max-w-[100px] h-1 bg-white/10 rounded-full mt-2 overflow-hidden mx-auto">
+                        <div class="h-full bg-white transition-all" :style="`width: ${xp}%`"></div>
+                    </div>
+                </div>
 
-<!-- Weekly Planner -->
-<div class="space-y-4">
-<h3 class="font-bold text-lg text-white">Weekly Planner</h3>
-<template x-for="(tasks,day) in weekTasks">
-<div class="glass rounded-2xl p-4">
-<div class="flex justify-between items-center mb-2">
-<h4 class="font-semibold text-white" x-text="day"></h4>
-<button @click="openTaskModal(day);playSound('click')" class="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600">+ Add Task</button>
-</div>
-<template x-for="task in tasks">
-<div class="flex flex-col mb-2 p-2 rounded" :class="task.done ? 'task-done bg-white/10' : task.priority==='high' ? 'bg-red-500/40' : task.priority==='medium' ? 'bg-yellow-400/30' : 'bg-white/10'">
-<div class="flex justify-between items-center">
-<p class="font-bold text-white" x-text="task.name"></p>
-<div class="flex gap-2">
-<button @click="completeTask(day,task)" class="px-2 py-1 bg-green-500 rounded text-xs font-bold hover:bg-green-600" x-show="!task.done">Done</button>
-<span x-show="task.done" class="text-green-400 text-xs">✔</span>
-</div>
-</div>
-<p class="text-xs text-white/80" x-show="task.notes" x-text="task.notes"></p>
-<a :href="task.link" target="_blank" class="text-blue-200 text-xs underline" x-show="task.link" x-text="task.link"></a>
-</div>
-</template>
-</div>
-</template>
-</div>
+                <div class="flex justify-between gap-1 overflow-x-auto pb-1 px-1 no-scrollbar">
+                    <template x-for="date in weekDates" :key="date.getTime()">
+                        <button @click="selectDate(date)" class="flex-1 min-w-[55px] py-4 rounded-[1.5rem] flex flex-col items-center gap-1 transition-all" :class="date.toDateString() === selectedDate.toDateString() ? 'bg-white text-black scale-105 shadow-xl' : 'glass opacity-60'">
+                            <span class="text-[7px] font-black uppercase" x-text="date.toLocaleDateString('en-US', {weekday: 'short'})"></span>
+                            <span class="text-base font-black" x-text="date.getDate()"></span>
+                        </button>
+                    </template>
+                </div>
 
-</div>
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between px-2">
+                        <h3 class="text-lg font-black italic tracking-tight" x-text="dayDisplay"></h3>
+                        <div class="flex gap-2">
+                            <button @click="openModal('event')" class="glass px-3 py-1.5 rounded-xl text-[9px] font-black uppercase">Event</button>
+                            <button @click="openModal('task')" class="glass px-3 py-1.5 rounded-xl text-[9px] font-black uppercase text-cyan-300">+ Goal</button>
+                        </div>
+                    </div>
+                    <template x-for="task in currentDayData.tasks" :key="task.id">
+                        <div class="glass p-5 rounded-[2rem] flex items-center gap-4 transition-all" :class="task.completed ? 'opacity-30 scale-95' : ''">
+                            <button @click="toggleItem('tasks', task.id)" class="w-7 h-7 rounded-xl border-2 flex items-center justify-center transition-all" :class="task.completed ? 'bg-white border-white' : 'border-white/20'"><svg x-show="task.completed" class="w-4 h-4 text-black" fill="currentColor" viewBox="0 0 20 20"><path d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"/></svg></button>
+                            <div class="flex-1"><span class="text-sm font-bold" x-text="task.title"></span></div>
+                            <button @click="deleteItem('tasks', task.id)" class="text-white/20">✕</button>
+                        </div>
+                    </template>
+                </div>
+            </div>
 
-<!-- PET CUSTOMIZATION MODAL -->
-<div x-show="showPetCustomization" x-cloak class="fixed inset-0 flex items-center justify-center z-50">
-<div class="modal-bg absolute inset-0"></div>
-<div class="bg-white rounded-xl p-6 relative z-50 w-11/12 max-w-md">
-<h3 class="font-bold text-lg mb-2">Customize Your EvoPal</h3>
-<div class="grid grid-cols-3 gap-4">
-<template x-for="p in pets">
-<button @click="if(!p.locked){petEmoji = p.emoji; playSound('custom')}" class="glass p-4 rounded-xl text-3xl" :class="petEmoji===p.emoji?'ring-2 ring-blue-500':''">
-<span x-text="p.emoji"></span>
-<p class="text-xs mt-1 text-white" x-text="p.locked?'Coming Soon':''"></p>
-</button>
-</template>
-</div>
-<div class="flex justify-end mt-4 gap-2">
-<button @click="showPetCustomization=false;playSound('click')" class="px-4 py-2 bg-gray-400 text-white rounded hover:bg-gray-500">Close</button>
-</div>
-</div>
-</div>
+            <!-- UTILITY DECK TAB -->
+            <div x-show="activeTab === 'arcade'" class="relative h-full space-y-8 pt-4">
+                <template x-if="adminLocked.arcade">
+                    <div class="absolute inset-0 z-[100] flex flex-col items-center justify-center glass rounded-[3rem] text-center p-8 backdrop-blur-3xl">
+                        <span class="text-6xl mb-4">🔒</span>
+                        <h2 class="text-3xl font-black italic uppercase">Feature coming soon</h2>
+                    </div>
+                </template>
 
-<!-- TASK MODAL -->
-<div x-show="showTaskModal" x-cloak class="fixed inset-0 flex items-center justify-center z-50">
-<div class="modal-bg absolute inset-0"></div>
-<div class="bg-white rounded-xl p-6 relative z-50 w-11/12 max-w-md">
-<h3 class="font-bold text-lg mb-2">Add Task for <span x-text="currentModalDay"></span></h3>
-<input type="text" x-model="newTaskName" placeholder="Task title" class="w-full p-2 border rounded mb-2">
-<textarea x-model="newTaskNotes" placeholder="Notes / Grocery list" class="w-full p-2 border rounded mb-2"></textarea>
-<input type="text" x-model="newTaskLink" placeholder="Link (Google Meet / Docs / etc)" class="w-full p-2 border rounded mb-2">
-<select x-model="newTaskPriority" class="w-full p-2 border rounded mb-2">
-<option value="">Priority</option>
-<option value="high">High 🔴</option>
-<option value="medium">Medium 🟡</option>
-<option value="low">Low 🟢</option>
-</select>
-<div class="flex justify-end gap-2">
-<button @click="addTask();playSound('task')" class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">Add</button>
-<button @click="closeTaskModal();playSound('click')" class="px-4 py-2 bg-gray-400 text-white rounded hover:bg-gray-500">Cancel</button>
-</div>
-</div>
-</div>
+                <h2 class="text-4xl font-black italic tracking-tighter mb-6 uppercase">Deck</h2>
+                <div class="grid grid-cols-2 gap-4">
+                    <button @click="activeTool = 'calc'" class="glass p-8 rounded-[2.5rem] flex flex-col items-center gap-4 hover:scale-105 transition-all">
+                        <span class="text-4xl">🔢</span>
+                        <span class="text-[10px] font-black uppercase tracking-widest">Calc</span>
+                    </button>
+                    <button @click="activeTool = 'compass'" class="glass p-8 rounded-[2.5rem] flex flex-col items-center gap-4 hover:scale-105 transition-all">
+                        <span class="text-4xl">🧭</span>
+                        <span class="text-[10px] font-black uppercase tracking-widest">Compass</span>
+                    </button>
+                </div>
+            </div>
 
-<!-- GAMES -->
-<div x-show="screen==='games'" class="space-y-6 text-center">
-<h2 class="text-2xl font-bold text-white">Mini Games</h2>
-<template x-for="g in games">
-<div class="glass rounded-3xl p-6">
-<p class="text-lg mb-2 text-white" x-text="g.name"></p>
-<p class="text-sm opacity-70 text-white" x-text="g.locked?'Coming Soon':'Play Now'"></p>
-</div>
-</template>
-<button @click="screen='dashboard';playSound('click')" class="w-full py-3 rounded-xl bg-indigo-500 font-bold text-white">Back</button>
-</div>
+            <!-- LAB TAB (PET SELECTOR) -->
+            <div x-show="activeTab === 'character'" class="relative space-y-6 pt-4 animate-in zoom-in duration-300">
+                <template x-if="adminLocked.character">
+                    <div class="absolute inset-0 z-[100] flex flex-col items-center justify-center glass rounded-[4rem] text-center p-8 backdrop-blur-3xl">
+                        <span class="text-6xl mb-4">🔒</span>
+                        <h2 class="text-3xl font-black italic uppercase">Feature coming soon</h2>
+                        <button @click="adminLocked.character = false; sync()" class="mt-4 px-6 py-2 bg-white text-black font-black rounded-full text-xs">FORCE UNLOCK</button>
+                    </div>
+                </template>
 
-</main>
+                <h2 class="text-4xl font-black italic tracking-tighter mb-6 uppercase">The Lab</h2>
+                
+                <div class="glass p-12 rounded-[4rem] flex flex-col items-center relative overflow-hidden">
+                    <div class="absolute inset-0 bg-white/5 pointer-events-none"></div>
+                    
+                    <div class="flex items-center justify-between w-full mb-8">
+                        <button @click="cyclePet(-1)" class="w-14 h-14 glass rounded-2xl text-2xl">←</button>
+                        <div class="text-[9rem] float drop-shadow-2xl select-none" x-text="petEmoji"></div>
+                        <button @click="cyclePet(1)" class="w-14 h-14 glass rounded-2xl text-2xl">→</button>
+                    </div>
 
-<script>
-function evopals(){
-return{
-screen:'loading',
-petName:'Nova',
-petEmoji:'🐱',
-level:1,
-xp:0,
-mood:'happy',
-weekTasks:{
-'Sunday':[], 'Monday':[], 'Tuesday':[], 'Wednesday':[], 'Thursday':[], 'Friday':[], 'Saturday':[]
-},
-pets:[
-{emoji:'🐱',locked:false},{emoji:'🐶',locked:true},{emoji:'🐲',locked:true},{emoji:'🦄',locked:true},{emoji:'🤖',locked:true}
-],
-games:[
-{name:'Gear Shift Racer',locked:true},
-{name:'Memory Sprint',locked:true}
-],
-showTaskModal:false,
-showPetCustomization:false,
-currentModalDay:'',
-newTaskName:'',
-newTaskNotes:'',
-newTaskLink:'',
-newTaskPriority:'',
-get currentPetEmoji(){return this.petEmoji;},
-get petMoodText(){
-if(this.mood==='happy') return '😎 Feeling awesome!';
-if(this.mood==='tired') return '😴 Needs energy';
-if(this.mood==='excited') return '🤩 Ready!';
-return '';
-},
-init(){
-const saved=JSON.parse(localStorage.getItem('evopals_lifehub_v4'));
-if(saved) Object.assign(this,saved);
-setTimeout(()=>this.screen='dashboard',1500);
-},
-openTaskModal(day){ this.currentModalDay=day; this.newTaskName=''; this.newTaskNotes=''; this.newTaskLink=''; this.newTaskPriority=''; this.showTaskModal=true; },
-closeTaskModal(){ this.showTaskModal=false; },
-addTask(){
-if(this.newTaskName.trim()==='') return;
-this.weekTasks[this.currentModalDay].push({name:this.newTaskName,notes:this.newTaskNotes,link:this.newTaskLink,priority:this.newTaskPriority,done:false});
-this.save();
-},
-completeTask(day,task){
-if(task.done) return;
-task.done=true;
-this.xp+=20;
-this.mood='happy';
-this.playSound('task');
-if(this.xp>=100){this.level++; this.xp=0; this.mood='excited'; this.playSound('levelup'); if(navigator.vibrate) navigator.vibrate(100);}
-this.save();
-if(Notification.permission==='granted'){new Notification(`Nova says: You completed "${task.name}"! 😎`);}
-else if(Notification.permission!=='denied'){Notification.requestPermission();}
-},
-changeTheme(){alert('Theme change coming soon!'); this.playSound('theme');},
-save(){localStorage.setItem('evopals_lifehub_v4',JSON.stringify(this));},
-playSound(type){
-let audio;
-switch(type){
-case 'task': audio=new Audio('https://www.soundjay.com/button/sounds/button-3.mp3'); break;
-case 'levelup': audio=new Audio('https://www.soundjay.com/button/sounds/button-09.mp3'); break;
-case 'custom': audio=new Audio('https://www.soundjay.com/button/sounds/button-10.mp3'); break;
-case 'click': audio=new Audio('https://www.soundjay.com/button/sounds/button-16.mp3'); break;
-case 'theme': audio=new Audio('https://www.soundjay.com/button/sounds/button-7.mp3'); break;
-case 'game': audio=new Audio('https://www.soundjay.com/button/sounds/button-15.mp3'); break;
-default:return;
-}
-audio.volume=0.3; audio.play();
-}
-}
-}
-</script>
+                    <div class="w-full space-y-4">
+                        <div class="text-center">
+                            <!-- SECRET ADMIN TRIGGER: Tap name 5 times -->
+                            <div @click="triggerAdmin()" class="cursor-pointer select-none">
+                                <div class="bg-transparent text-center text-4xl font-black italic outline-none w-full mb-2 uppercase select-none" x-text="petName"></div>
+                                <p class="text-[10px] font-black uppercase tracking-[0.5em] opacity-40">Soul Identity</p>
+                            </div>
+                        </div>
 
+                        <div class="grid grid-cols-4 gap-2 mt-8">
+                            <template x-for="(emoji, index) in petSpecies">
+                                <button @click="petIndex = index; petEmoji = emoji; sync()" 
+                                        class="aspect-square rounded-2xl flex items-center justify-center text-2xl transition-all"
+                                        :class="petEmoji === emoji ? 'bg-white shadow-xl scale-110' : 'glass opacity-40'">
+                                    <span x-text="emoji"></span>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- HIDDEN ADMIN SETTINGS -->
+                <div x-show="adminVisible" x-transition.scale.origin.bottom class="glass p-8 rounded-[3rem] space-y-4 border-2 border-red-500/20">
+                    <div class="flex justify-between items-center mb-2">
+                        <h4 class="text-xs font-black uppercase tracking-widest text-red-400">Administrative Terminal</h4>
+                        <button @click="adminVisible = false" class="text-[10px] font-black opacity-40 uppercase">Hide</button>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold uppercase tracking-widest">Lock Hub</span>
+                            <button @click="adminLocked.planner = !adminLocked.planner; sync()" class="w-10 h-5 rounded-full p-1 transition-colors" :class="adminLocked.planner ? 'bg-red-500' : 'bg-white/20'">
+                                <div class="w-3 h-3 bg-white rounded-full transition-transform" :class="adminLocked.planner ? 'translate-x-5' : ''"></div>
+                            </button>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold uppercase tracking-widest">Lock Deck</span>
+                            <button @click="adminLocked.arcade = !adminLocked.arcade; sync()" class="w-10 h-5 rounded-full p-1 transition-colors" :class="adminLocked.arcade ? 'bg-red-500' : 'bg-white/20'">
+                                <div class="w-3 h-3 bg-white rounded-full transition-transform" :class="adminLocked.arcade ? 'translate-x-5' : ''"></div>
+                            </button>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold uppercase tracking-widest">Lock Lab</span>
+                            <button @click="adminLocked.character = !adminLocked.character; sync()" class="w-10 h-5 rounded-full p-1 transition-colors" :class="adminLocked.character ? 'bg-red-500' : 'bg-white/20'">
+                                <div class="w-3 h-3 bg-white rounded-full transition-transform" :class="adminLocked.character ? 'translate-x-5' : ''"></div>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- Tools / Modals -->
+        <div x-show="activeTool === 'calc'" x-transition.opacity class="fixed inset-0 z-[400] bg-black/95 backdrop-blur-2xl flex items-center justify-center p-6" @click="activeTool = null">
+            <div class="bg-zinc-900/50 w-full max-w-sm rounded-[3rem] p-8 border border-white/10" @click.stop>
+                <div class="mb-6 p-6 glass rounded-3xl text-right overflow-hidden">
+                    <div class="text-4xl font-black tracking-tighter truncate" x-text="calcDisplay"></div>
+                </div>
+                <div class="grid grid-cols-4 gap-3">
+                    <template x-for="btn in ['7','8','9','÷','4','5','6','×','1','2','3','-','C','0','=','+']">
+                        <button @click="btn === 'C' ? calcClear() : btn === '=' ? calcResult() : calcInput(btn)"
+                                class="aspect-square rounded-2xl flex items-center justify-center text-xl font-black calc-btn glass">
+                            <span x-text="btn"></span>
+                        </button>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <div x-show="showAddModal" x-transition.opacity class="fixed inset-0 z-[450] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md" @click="showAddModal=false">
+            <div class="bg-zinc-900 w-full max-md rounded-[3rem] p-8 border border-white/10" @click.stop>
+                <div class="flex justify-between items-center mb-8">
+                    <h2 class="text-2xl font-black italic" x-text="'NEW ' + modalType"></h2>
+                    <button @click="showAddModal=false" class="w-12 h-12 glass rounded-full">✕</button>
+                </div>
+                <input type="text" x-model="newInput" placeholder="..." class="w-full bg-white/5 border border-white/10 rounded-2xl p-6 text-white font-black outline-none mb-4">
+                <button @click="addItem()" class="w-full py-6 bg-white text-black rounded-[2rem] font-black uppercase italic">Sync Goal</button>
+            </div>
+        </div>
+
+        <nav class="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-sm glass rounded-[2.5rem] p-3 flex justify-between shadow-2xl z-[150]">
+            <button @click="activeTab = 'planner'" class="flex-1 py-4 rounded-[1.8rem] flex flex-col items-center gap-1 transition-all" :class="activeTab === 'planner' ? 'nav-active' : 'opacity-40'">
+                <span class="text-xl">🏠</span>
+                <span class="text-[8px] font-black uppercase tracking-widest">Hub</span>
+            </button>
+            <button @click="activeTab = 'arcade'" class="flex-1 py-4 rounded-[1.8rem] flex flex-col items-center gap-1 transition-all" :class="activeTab === 'arcade' ? 'nav-active' : 'opacity-40'">
+                <span class="text-xl">🛠️</span>
+                <span class="text-[8px] font-black uppercase tracking-widest">Deck</span>
+            </button>
+            <button @click="activeTab = 'character'" class="flex-1 py-4 rounded-[1.8rem] flex flex-col items-center gap-1 transition-all" :class="activeTab === 'character' ? 'nav-active' : 'opacity-40'">
+                <span class="text-xl">🐾</span>
+                <span class="text-[8px] font-black uppercase tracking-widest">Lab</span>
+            </button>
+        </nav>
+
+    </div>
 </body>
 </html>
