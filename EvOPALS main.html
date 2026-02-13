@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <!-- Optimized viewport for iOS to prevent scaling on input focus and handle notch areas -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Evopals Life Hub V15 - Multi-Pet Lab & Admin</title>
     
@@ -15,13 +14,19 @@
     <style>
         [x-cloak] { display: none !important; }
         
-        /* Ensure the body fills the viewport including iOS notch areas */
-        body { 
+        :root {
+            --app-height: 100%;
+        }
+
+        html, body { 
             margin: 0; 
-            font-family: 'Inter', sans-serif; 
-            overflow: hidden; 
+            padding: 0;
+            width: 100%;
             height: 100vh;
-            height: -webkit-fill-available; /* Fix for mobile Safari height */
+            height: var(--app-height);
+            font-family: 'Inter', sans-serif; 
+            overflow: hidden;
+            background: #000;
         }
         
         .float { animation: float 3s ease-in-out infinite; }
@@ -34,16 +39,17 @@
             background: linear-gradient(135deg, var(--bg-1), var(--bg-2), var(--bg-3));
             background-size: 400% 400%;
             animation: gradientMove 15s ease infinite;
+            width: 100%;
+            height: 100%;
         }
         @keyframes gradientMove { 0% { background-position: 0% 50% } 50% { background-position: 100% 50% } 100% { background-position: 0% 50% } }
         
         .glass { background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.2); }
         .glass-dark { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.1); }
         
-        .nav-active { background: white !important; color: black !important; box-shadow: 0 15px 30px rgba(0,0,0,0.3); transform: translateY(-10px); }
+        .nav-active { background: white !important; color: black !important; box-shadow: 0 10px 20px rgba(0,0,0,0.2); transform: translateY(-5px); }
         
-        /* Prevent gray highlight on tap in iOS */
-        * { -webkit-tap-highlight-color: transparent; }
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
 
         .calc-btn { transition: all 0.1s; border: 1px solid rgba(255,255,255,0.1); }
         .calc-btn:active { transform: scale(0.9); background: white; color: black; }
@@ -56,12 +62,21 @@
 
         .no-scrollbar::-webkit-scrollbar { display: none; }
         
-        /* iOS Safe Area spacing for the nav bar */
+        /* Safe Area Padding for notch phones */
         nav { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+        header { padding-top: calc(10px + env(safe-area-inset-top)); }
     </style>
 
     <script>
-        // Fallback logic for local execution outside of the Canvas environment
+        // Adjust for mobile address bars
+        const appHeight = () => {
+            const doc = document.documentElement;
+            doc.style.setProperty('--app-height', `${window.innerHeight}px`);
+        };
+        window.addEventListener('resize', appHeight);
+        window.addEventListener('orientationchange', appHeight);
+        appHeight();
+
         const firebaseConfig = typeof __firebase_config !== 'undefined' 
             ? JSON.parse(__firebase_config) 
             : { apiKey: "local", authDomain: "local", projectId: "local" };
@@ -109,7 +124,7 @@
                     this.updateWeek();
                     
                     if (!auth) {
-                        setTimeout(() => { this.screen = 'dashboard'; }, 1000);
+                        setTimeout(() => { this.screen = 'dashboard'; }, 1500);
                         return;
                     }
 
@@ -117,7 +132,7 @@
                         if (user) {
                             this.userId = user.uid;
                             await this.loadAllData();
-                            setTimeout(() => { this.screen = 'dashboard'; }, 1000);
+                            setTimeout(() => { this.screen = 'dashboard'; }, 1500);
                         } else {
                             try {
                                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -126,14 +141,6 @@
                             } catch(e) { this.screen = 'dashboard'; }
                         }
                     });
-
-                    // iOS Compass Permission Check
-                    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                        // For iOS 13+ we need explicit permission for the compass
-                        window.addEventListener('click', () => {
-                            DeviceOrientationEvent.requestPermission().catch(console.error);
-                        }, { once: true });
-                    }
 
                     if (window.DeviceOrientationEvent) {
                         window.addEventListener('deviceorientation', (e) => {
@@ -301,7 +308,7 @@
         }
     </script>
 </head>
-<body x-data="evopals()" x-init="init()" :class="currentTheme" class="gradient-bg text-white overflow-hidden">
+<body x-data="evopals()" x-init="init()" :class="currentTheme" class="gradient-bg text-white">
 
     <!-- Loading -->
     <div x-show="screen==='loading'" class="fixed inset-0 gradient-bg flex flex-col items-center justify-center z-[500]">
@@ -309,22 +316,22 @@
         <h1 class="mt-8 text-4xl font-black italic tracking-tighter">EVOPALS</h1>
     </div>
 
-    <div x-show="screen!=='loading'" x-cloak class="h-screen flex flex-col max-w-xl mx-auto relative">
+    <!-- Main Container -->
+    <div x-show="screen!=='loading'" x-cloak class="h-full w-full flex flex-col max-w-xl mx-auto relative">
         
-        <header class="p-6 pb-2 pt-10 md:pt-6 flex items-center justify-between z-50">
+        <header class="w-full px-6 pb-2 flex items-center justify-between z-50">
             <h1 class="text-2xl font-black italic tracking-tighter">EVOPALS</h1>
-            <button @click.stop="currentTheme = currentTheme === 'theme-default' ? 'theme-midnight' : 'theme-default'" class="glass w-12 h-12 rounded-2xl flex items-center justify-center">🎨</button>
+            <button @click.stop="currentTheme = currentTheme === 'theme-default' ? 'theme-midnight' : 'theme-default'" class="glass w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg">🎨</button>
         </header>
 
         <main class="flex-1 overflow-y-auto px-4 pb-32 no-scrollbar">
             
             <!-- HUB TAB -->
-            <div x-show="activeTab === 'planner'" class="relative h-full space-y-6 pt-2 animate-in fade-in duration-300">
+            <div x-show="activeTab === 'planner'" class="relative space-y-6 pt-2 animate-in fade-in duration-300">
                 <template x-if="adminLocked.planner">
                     <div class="absolute inset-0 z-[100] flex flex-col items-center justify-center glass rounded-[3rem] text-center p-8 backdrop-blur-3xl">
                         <span class="text-6xl mb-4">🔒</span>
-                        <h2 class="text-3xl font-black italic uppercase">Feature coming soon</h2>
-                        <p class="opacity-50 text-[10px] font-bold uppercase tracking-widest mt-2">Maintenance in progress</p>
+                        <h2 class="text-3xl font-black italic uppercase">Coming soon</h2>
                     </div>
                 </template>
 
@@ -336,15 +343,17 @@
                         </template>
                     </div>
                     <h2 class="text-3xl font-black italic tracking-tighter" x-text="petName"></h2>
-                    <div class="w-full max-w-[100px] h-1 bg-white/10 rounded-full mt-2 overflow-hidden mx-auto">
-                        <div class="h-full bg-white transition-all" :style="`width: ${xp}%`"></div>
+                    <div class="w-full max-w-[120px] h-1.5 bg-white/10 rounded-full mt-3 overflow-hidden mx-auto">
+                        <div class="h-full bg-white transition-all duration-500" :style="`width: ${xp}%`"></div>
                     </div>
+                    <p class="text-[10px] font-bold uppercase opacity-40 mt-2">LVL <span x-text="level"></span></p>
                 </div>
 
-                <div class="flex justify-between gap-1 overflow-x-auto pb-1 px-1 no-scrollbar">
+                <!-- Calendar Strip -->
+                <div class="flex justify-between gap-2 overflow-x-auto pb-2 px-1 no-scrollbar">
                     <template x-for="date in weekDates" :key="date.getTime()">
-                        <button @click="selectDate(date)" class="flex-1 min-w-[55px] py-4 rounded-[1.5rem] flex flex-col items-center gap-1 transition-all" :class="date.toDateString() === selectedDate.toDateString() ? 'bg-white text-black scale-105 shadow-xl' : 'glass opacity-60'">
-                            <span class="text-[7px] font-black uppercase" x-text="date.toLocaleDateString('en-US', {weekday: 'short'})"></span>
+                        <button @click="selectDate(date)" class="flex-1 min-w-[50px] py-3.5 rounded-[1.5rem] flex flex-col items-center gap-1 transition-all" :class="date.toDateString() === selectedDate.toDateString() ? 'bg-white text-black scale-105 shadow-xl' : 'glass opacity-60'">
+                            <span class="text-[8px] font-black uppercase" x-text="date.toLocaleDateString('en-US', {weekday: 'short'})"></span>
                             <span class="text-base font-black" x-text="date.getDate()"></span>
                         </button>
                     </template>
@@ -353,73 +362,56 @@
                 <div class="space-y-4">
                     <div class="flex items-center justify-between px-2">
                         <h3 class="text-lg font-black italic tracking-tight" x-text="dayDisplay"></h3>
-                        <div class="flex gap-2">
-                            <button @click="openModal('event')" class="glass px-3 py-1.5 rounded-xl text-[9px] font-black uppercase">Event</button>
-                            <button @click="openModal('task')" class="glass px-3 py-1.5 rounded-xl text-[9px] font-black uppercase text-cyan-300">+ Goal</button>
-                        </div>
+                        <button @click="openModal('task')" class="glass px-4 py-2 rounded-xl text-[10px] font-black uppercase text-cyan-300 shadow-md">+ GOAL</button>
                     </div>
                     <template x-for="task in currentDayData.tasks" :key="task.id">
-                        <div class="glass p-5 rounded-[2rem] flex items-center gap-4 transition-all" :class="task.completed ? 'opacity-30 scale-95' : ''">
-                            <button @click="toggleItem('tasks', task.id)" class="w-7 h-7 rounded-xl border-2 flex items-center justify-center transition-all" :class="task.completed ? 'bg-white border-white' : 'border-white/20'"><svg x-show="task.completed" class="w-4 h-4 text-black" fill="currentColor" viewBox="0 0 20 20"><path d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"/></svg></button>
+                        <div class="glass p-5 rounded-[2rem] flex items-center gap-4 transition-all" :class="task.completed ? 'opacity-30 scale-95' : 'shadow-lg'">
+                            <button @click="toggleItem('tasks', task.id)" class="w-8 h-8 rounded-xl border-2 flex items-center justify-center transition-all" :class="task.completed ? 'bg-white border-white' : 'border-white/20'"><svg x-show="task.completed" class="w-5 h-5 text-black" fill="currentColor" viewBox="0 0 20 20"><path d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"/></svg></button>
                             <div class="flex-1"><span class="text-sm font-bold" x-text="task.title"></span></div>
-                            <button @click="deleteItem('tasks', task.id)" class="text-white/20">✕</button>
+                            <button @click="deleteItem('tasks', task.id)" class="text-white/20 p-2">✕</button>
                         </div>
                     </template>
+                    <div x-show="currentDayData.tasks.length === 0" class="text-center py-10 opacity-20 font-black italic uppercase text-xs tracking-widest">
+                        Zero goals detected
+                    </div>
                 </div>
             </div>
 
             <!-- UTILITY DECK TAB -->
-            <div x-show="activeTab === 'arcade'" class="relative h-full space-y-8 pt-4">
-                <template x-if="adminLocked.arcade">
-                    <div class="absolute inset-0 z-[100] flex flex-col items-center justify-center glass rounded-[3rem] text-center p-8 backdrop-blur-3xl">
-                        <span class="text-6xl mb-4">🔒</span>
-                        <h2 class="text-3xl font-black italic uppercase">Feature coming soon</h2>
-                    </div>
-                </template>
-
+            <div x-show="activeTab === 'arcade'" class="relative space-y-8 pt-4">
                 <h2 class="text-4xl font-black italic tracking-tighter mb-6 uppercase">Deck</h2>
                 <div class="grid grid-cols-2 gap-4">
-                    <button @click="activeTool = 'calc'" class="glass p-8 rounded-[2.5rem] flex flex-col items-center gap-4 hover:scale-105 transition-all">
+                    <button @click="activeTool = 'calc'" class="glass p-8 rounded-[2.5rem] flex flex-col items-center gap-4 hover:scale-105 transition-all shadow-xl">
                         <span class="text-4xl">🔢</span>
-                        <span class="text-[10px] font-black uppercase tracking-widest">Calc</span>
+                        <span class="text-[10px] font-black uppercase tracking-widest">Calculator</span>
                     </button>
-                    <button @click="activeTool = 'compass'" class="glass p-8 rounded-[2.5rem] flex flex-col items-center gap-4 hover:scale-105 transition-all">
+                    <button @click="activeTool = 'compass'" class="glass p-8 rounded-[2.5rem] flex flex-col items-center gap-4 hover:scale-105 transition-all shadow-xl">
                         <span class="text-4xl">🧭</span>
                         <span class="text-[10px] font-black uppercase tracking-widest">Compass</span>
                     </button>
                 </div>
             </div>
 
-            <!-- LAB TAB (PET SELECTOR) -->
+            <!-- LAB TAB -->
             <div x-show="activeTab === 'character'" class="relative space-y-6 pt-4 animate-in zoom-in duration-300">
-                <template x-if="adminLocked.character">
-                    <div class="absolute inset-0 z-[100] flex flex-col items-center justify-center glass rounded-[4rem] text-center p-8 backdrop-blur-3xl">
-                        <span class="text-6xl mb-4">🔒</span>
-                        <h2 class="text-3xl font-black italic uppercase">Feature coming soon</h2>
-                        <button @click="adminLocked.character = false; sync()" class="mt-4 px-6 py-2 bg-white text-black font-black rounded-full text-xs">FORCE UNLOCK</button>
-                    </div>
-                </template>
-
                 <h2 class="text-4xl font-black italic tracking-tighter mb-6 uppercase">The Lab</h2>
                 
-                <div class="glass p-12 rounded-[4rem] flex flex-col items-center relative overflow-hidden">
-                    <div class="absolute inset-0 bg-white/5 pointer-events-none"></div>
-                    
+                <div class="glass p-10 rounded-[4rem] flex flex-col items-center relative overflow-hidden shadow-2xl">
                     <div class="flex items-center justify-between w-full mb-8">
-                        <button @click="cyclePet(-1)" class="w-14 h-14 glass rounded-2xl text-2xl">←</button>
-                        <div class="text-[9rem] float drop-shadow-2xl select-none" x-text="petEmoji"></div>
-                        <button @click="cyclePet(1)" class="w-14 h-14 glass rounded-2xl text-2xl">→</button>
+                        <button @click="cyclePet(-1)" class="w-12 h-12 glass rounded-2xl text-xl flex items-center justify-center">←</button>
+                        <div class="text-[8rem] float drop-shadow-2xl select-none" x-text="petEmoji"></div>
+                        <button @click="cyclePet(1)" class="w-12 h-12 glass rounded-2xl text-xl flex items-center justify-center">→</button>
                     </div>
 
                     <div class="w-full space-y-4">
                         <div class="text-center">
-                            <div @click="triggerAdmin()" class="cursor-pointer select-none">
-                                <div class="bg-transparent text-center text-4xl font-black italic outline-none w-full mb-2 uppercase select-none" x-text="petName"></div>
+                            <div @click="triggerAdmin()" class="cursor-pointer select-none py-2">
+                                <div class="text-4xl font-black italic tracking-tighter uppercase mb-1" x-text="petName"></div>
                                 <p class="text-[10px] font-black uppercase tracking-[0.5em] opacity-40">Soul Identity</p>
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-4 gap-2 mt-8">
+                        <div class="grid grid-cols-4 gap-3 mt-8">
                             <template x-for="(emoji, index) in petSpecies">
                                 <button @click="petIndex = index; petEmoji = emoji; sync()" 
                                         class="aspect-square rounded-2xl flex items-center justify-center text-2xl transition-all"
@@ -433,7 +425,7 @@
 
                 <div x-show="adminVisible" x-transition.scale.origin.bottom class="glass p-8 rounded-[3rem] space-y-4 border-2 border-red-500/20">
                     <div class="flex justify-between items-center mb-2">
-                        <h4 class="text-xs font-black uppercase tracking-widest text-red-400">Administrative Terminal</h4>
+                        <h4 class="text-xs font-black uppercase tracking-widest text-red-400">Admin Panel</h4>
                         <button @click="adminVisible = false" class="text-[10px] font-black opacity-40 uppercase">Hide</button>
                     </div>
                     <div class="space-y-3">
@@ -449,12 +441,6 @@
                                 <div class="w-3 h-3 bg-white rounded-full transition-transform" :class="adminLocked.arcade ? 'translate-x-5' : ''"></div>
                             </button>
                         </div>
-                        <div class="flex items-center justify-between">
-                            <span class="text-[10px] font-bold uppercase tracking-widest">Lock Lab</span>
-                            <button @click="adminLocked.character = !adminLocked.character; sync()" class="w-10 h-5 rounded-full p-1 transition-colors" :class="adminLocked.character ? 'bg-red-500' : 'bg-white/20'">
-                                <div class="w-3 h-3 bg-white rounded-full transition-transform" :class="adminLocked.character ? 'translate-x-5' : ''"></div>
-                            </button>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -464,7 +450,7 @@
         <!-- Tools / Modals -->
         <div x-show="activeTool === 'calc'" x-transition.opacity class="fixed inset-0 z-[400] bg-black/95 backdrop-blur-2xl flex items-center justify-center p-6" @click="activeTool = null">
             <div class="bg-zinc-900/50 w-full max-w-sm rounded-[3rem] p-8 border border-white/10" @click.stop>
-                <div class="mb-6 p-6 glass rounded-3xl text-right overflow-hidden">
+                <div class="mb-6 p-6 glass rounded-3xl text-right overflow-hidden shadow-inner">
                     <div class="text-4xl font-black tracking-tighter truncate" x-text="calcDisplay"></div>
                 </div>
                 <div class="grid grid-cols-4 gap-3">
@@ -478,19 +464,36 @@
             </div>
         </div>
 
-        <div x-show="showAddModal" x-transition.opacity class="fixed inset-0 z-[450] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md" @click="showAddModal=false">
-            <div class="bg-zinc-900 w-full max-md rounded-[3rem] p-8 border border-white/10" @click.stop>
-                <div class="flex justify-between items-center mb-8">
-                    <h2 class="text-2xl font-black italic" x-text="'NEW ' + modalType"></h2>
-                    <button @click="showAddModal=false" class="w-12 h-12 glass rounded-full">✕</button>
+        <div x-show="activeTool === 'compass'" x-transition.opacity class="fixed inset-0 z-[400] bg-black/95 backdrop-blur-2xl flex items-center justify-center p-6" @click="activeTool = null">
+             <div class="flex flex-col items-center gap-12" @click.stop>
+                <div class="w-64 h-64 glass rounded-full flex items-center justify-center relative shadow-2xl transition-transform duration-200" :style="`transform: rotate(${-compassHeading}deg)`">
+                    <div class="absolute top-4 font-black text-xs">N</div>
+                    <div class="absolute bottom-4 font-black text-xs">S</div>
+                    <div class="absolute left-4 font-black text-xs">W</div>
+                    <div class="absolute right-4 font-black text-xs">E</div>
+                    <div class="w-1 h-32 bg-red-500 rounded-full absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full origin-bottom"></div>
                 </div>
-                <input type="text" x-model="newInput" placeholder="..." class="w-full bg-white/5 border border-white/10 rounded-2xl p-6 text-white font-black outline-none mb-4">
-                <button @click="addItem()" class="w-full py-6 bg-white text-black rounded-[2rem] font-black uppercase italic">Sync Goal</button>
+                <div class="text-center">
+                    <div class="text-5xl font-black italic tracking-tighter" x-text="Math.round(compassHeading) + '°'"></div>
+                    <p class="text-[10px] font-black opacity-40 uppercase tracking-[0.3em] mt-2">Magnetic Direction</p>
+                </div>
+             </div>
+        </div>
+
+        <div x-show="showAddModal" x-transition.opacity class="fixed inset-0 z-[450] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md" @click="showAddModal=false">
+            <div class="bg-zinc-950 w-full max-w-md rounded-[3rem] p-8 border border-white/10" @click.stop>
+                <div class="flex justify-between items-center mb-8">
+                    <h2 class="text-2xl font-black italic uppercase" x-text="'New Goal'"></h2>
+                    <button @click="showAddModal=false" class="w-12 h-12 glass rounded-full flex items-center justify-center">✕</button>
+                </div>
+                <input type="text" x-model="newInput" placeholder="What's the plan?" class="w-full bg-white/5 border border-white/10 rounded-2xl p-6 text-white font-black outline-none mb-6 text-lg">
+                <button @click="addItem()" class="w-full py-6 bg-white text-black rounded-[2rem] font-black uppercase italic shadow-xl">Sync to Hub</button>
             </div>
         </div>
 
-        <nav class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full glass p-3 flex justify-between shadow-2xl z-[150]">
-            <div class="flex w-[90%] max-w-sm mx-auto justify-between gap-2">
+        <!-- Tab Bar -->
+        <nav class="fixed bottom-0 left-0 w-full glass p-3 flex justify-center shadow-2xl z-[150]">
+            <div class="flex w-full max-w-sm justify-between gap-3 px-4">
                 <button @click="activeTab = 'planner'" class="flex-1 py-4 rounded-[1.8rem] flex flex-col items-center gap-1 transition-all" :class="activeTab === 'planner' ? 'nav-active' : 'opacity-40'">
                     <span class="text-xl">🏠</span>
                     <span class="text-[8px] font-black uppercase tracking-widest">Hub</span>
