@@ -3,6 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
     <title>Evopals Life Hub - Weekly Planner & Games</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
@@ -23,8 +27,13 @@
             overflow-x: hidden;
             background: #000;
             position: fixed;
+            overscroll-behavior: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
             font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
         }
+
+        * { -webkit-tap-highlight-color: transparent; }
         
         .gradient-bg {
             background: linear-gradient(135deg, #ff75c3, #ffa647, #7043ff);
@@ -39,14 +48,27 @@
         @keyframes gradientMove { 0% { background-position: 0% 50% } 50% { background-position: 100% 50% } 100% { background-position: 0% 50% } }
         
         .main-app {
+            height: 100vh;
             height: var(--app-height);
+            height: 100dvh;
             display: flex;
             flex-direction: column;
             width: 100%;
             max-width: 500px;
             margin: 0 auto;
             position: relative;
+            overflow: hidden;
         }
+
+        .main-app > header { padding-top: max(2rem, calc(env(safe-area-inset-top) + 1rem)) !important; }
+        nav.app-nav {
+            left: max(1.5rem, calc(env(safe-area-inset-left) + 1rem)) !important;
+            right: max(1.5rem, calc(env(safe-area-inset-right) + 1rem)) !important;
+            bottom: max(1.5rem, calc(env(safe-area-inset-bottom) + 0.5rem)) !important;
+        }
+        .main-app > main { padding-bottom: max(8rem, calc(env(safe-area-inset-bottom) + 7rem)) !important; }
+        button, [role="button"] { touch-action: manipulation; }
+        canvas#flyerCanvas { touch-action: none; }
 
         .glass { background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.15); }
         .glass-gold { background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 165, 0, 0.1)); backdrop-filter: blur(25px); border: 1px solid rgba(255, 215, 0, 0.3); }
@@ -55,6 +77,7 @@
         
         .float { animation: float 3s ease-in-out infinite; }
         @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+        @keyframes heartFloat { 0% { opacity: 0; transform: translateY(0) scale(0.5); } 30% { opacity: 1; transform: translateY(-20px) scale(1.2); } 100% { opacity: 0; transform: translateY(-50px) scale(1); } }
 
         .calendar-day { aspect-ratio: 1/1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; border-radius: 12px; transition: all 0.2s; }
         .has-event { background: rgba(112, 67, 255, 0.3); border: 1px solid rgba(112, 67, 255, 0.6); }
@@ -112,7 +135,35 @@
                 activeTool: null,
                 calcDisplay: '0',
                 compassHeading: 0,
-                
+
+                // Pet vitals — decay slowly over real elapsed time, restored by
+                // completing tasks and by petting.
+                petHunger: 100,
+                petHappiness: 100,
+                lastTickAt: Date.now(),
+                lastPetAt: 0,
+                showHeartBurst: false,
+
+                // Planner streak
+                streak: 0,
+                lastStreakDate: null,
+
+                // Timer tool (Pomodoro-style)
+                timerTotal: 25 * 60,
+                timerRemaining: 25 * 60,
+                timerRunning: false,
+                timerInterval: null,
+                timerLabel: 'Focus',
+
+                newTaskCategory: 'personal',
+                newTaskRepeat: 'none',
+                taskCategories: {
+                    personal: { label: 'Personal', color: '#43fff0' },
+                    work:     { label: 'Work',     color: '#ffa647' },
+                    health:   { label: 'Health',   color: '#7cff8a' },
+                    other:    { label: 'Other',    color: '#c78bff' }
+                },
+
                 gameState: 'menu',
                 gameScore: 0,
                 highScore: 0,
@@ -122,12 +173,13 @@
                 months: ['January','February','March','April','May','June','July','August','September','October','November','December'],
 
                 async init() {
-                    setTimeout(() => {
-                        if (!auth) { this.screen = 'app'; return; }
+                    setTimeout(async () => {
+                        if (!auth) { await this.loadData(); this._afterLoad(); this.screen = 'app'; return; }
                         auth.onAuthStateChanged(async (user) => {
                             if (user) {
                                 this.userId = user.uid;
                                 await this.loadData();
+                                this._afterLoad();
                                 this.screen = 'app';
                             } else {
                                 await auth.signInAnonymously();
@@ -142,38 +194,120 @@
                     }
                 },
 
-                async loadData() {
-                    if (!db || !this.userId) return;
-                    const doc = await db.collection('artifacts').doc(appId).collection('users').doc(this.userId).collection('data').doc('master').get();
-                    if (doc.exists) {
-                        const d = doc.data();
-                        this.petName = d.petName || 'Nova';
-                        this.petEmoji = d.petEmoji || '🐱';
-                        this.level = d.level || 1;
-                        this.xp = d.xp || 0;
-                        this.tasks = d.tasks || [];
-                        this.calendarEvents = d.calendarEvents || {};
-                        this.highScore = d.highScore || 0;
+                _afterLoad() {
+                    this.applyOfflineDecay();
+                    this.rolloverRecurringTasks();
+                    this.checkStreakBreak();
+                    // Keep vitals ticking down gently while the app stays open, and
+                    // re-check the daily rollover in case the app is left open overnight.
+                    setInterval(() => {
+                        this.applyOfflineDecay();
+                        this.rolloverRecurringTasks();
+                        this.checkStreakBreak();
+                    }, 60000);
+                },
+
+                todayKey() {
+                    const d = new Date();
+                    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                },
+
+                // Hunger/happiness drift down slowly over real elapsed time (roughly
+                // -1 point per 6 minutes), so the pet needs occasional attention even
+                // if the app was closed for a while, without being punishing.
+                applyOfflineDecay() {
+                    const now = Date.now();
+                    const minutesElapsed = (now - (this.lastTickAt || now)) / 60000;
+                    const drop = Math.min(100, minutesElapsed / 6);
+                    if (drop > 0) {
+                        this.petHunger = Math.max(0, this.petHunger - drop);
+                        this.petHappiness = Math.max(0, this.petHappiness - drop * 0.7);
+                        this.lastTickAt = now;
+                        this.saveData();
                     }
                 },
 
+                petTap() {
+                    const now = Date.now();
+                    if (now - this.lastPetAt < 1500) return; // simple cooldown so spamming taps can't inflate stats
+                    this.lastPetAt = now;
+                    this.petHappiness = Math.min(100, this.petHappiness + 8);
+                    this.showHeartBurst = true;
+                    setTimeout(() => { this.showHeartBurst = false; }, 800);
+                    this.saveData();
+                },
+
+                evolutionStage() {
+                    if (this.level >= 20) return { label: 'Legend', badge: '✨' };
+                    if (this.level >= 10) return { label: 'Adventurer', badge: '⭐' };
+                    if (this.level >= 5) return { label: 'Explorer', badge: '🌱' };
+                    return { label: 'Hatchling', badge: '' };
+                },
+
+                _applyLoadedData(d) {
+                    this.petName = d.petName || 'Nova';
+                    this.petEmoji = d.petEmoji || '🐱';
+                    this.level = d.level || 1;
+                    this.xp = d.xp || 0;
+                    this.tasks = d.tasks || [];
+                    this.calendarEvents = d.calendarEvents || {};
+                    this.highScore = d.highScore || 0;
+                    this.petHunger = d.petHunger ?? 100;
+                    this.petHappiness = d.petHappiness ?? 100;
+                    this.lastTickAt = d.lastTickAt || Date.now();
+                    this.streak = d.streak || 0;
+                    this.lastStreakDate = d.lastStreakDate || null;
+                },
+
+                async loadData() {
+                    if (!db || !this.userId) {
+                        // No Firebase configured — fall back to local device storage so the
+                        // app still remembers things instead of silently losing everything.
+                        try {
+                            const raw = localStorage.getItem('evopals_data');
+                            if (raw) this._applyLoadedData(JSON.parse(raw));
+                        } catch (e) { /* ignore malformed local data */ }
+                        return;
+                    }
+                    const doc = await db.collection('artifacts').doc(appId).collection('users').doc(this.userId).collection('data').doc('master').get();
+                    if (doc.exists) this._applyLoadedData(doc.data());
+                },
+
                 async saveData() {
-                    if (!db || !this.userId) return;
-                    await db.collection('artifacts').doc(appId).collection('users').doc(this.userId).collection('data').doc('master').set({
+                    const payload = {
                         petName: this.petName,
                         petEmoji: this.petEmoji,
                         level: this.level,
                         xp: this.xp,
                         tasks: this.tasks,
                         calendarEvents: this.calendarEvents,
-                        highScore: this.highScore
-                    }, { merge: true });
+                        highScore: this.highScore,
+                        petHunger: this.petHunger,
+                        petHappiness: this.petHappiness,
+                        lastTickAt: this.lastTickAt,
+                        streak: this.streak,
+                        lastStreakDate: this.lastStreakDate
+                    };
+                    if (!db || !this.userId) {
+                        try { localStorage.setItem('evopals_data', JSON.stringify(payload)); } catch (e) { /* storage full/disabled */ }
+                        return;
+                    }
+                    await db.collection('artifacts').doc(appId).collection('users').doc(this.userId).collection('data').doc('master').set(payload, { merge: true });
                 },
 
                 addTask() {
                     if (!this.newTaskText.trim()) return;
-                    this.tasks.push({ id: Date.now(), text: this.newTaskText, done: false });
+                    this.tasks.push({
+                        id: Date.now(),
+                        text: this.newTaskText,
+                        done: false,
+                        category: this.newTaskCategory,
+                        repeat: this.newTaskRepeat,       // 'none' | 'daily' | 'weekly'
+                        lastDoneDate: null
+                    });
                     this.newTaskText = '';
+                    this.newTaskCategory = 'personal';
+                    this.newTaskRepeat = 'none';
                     this.showTaskModal = false;
                     this.saveData();
                 },
@@ -184,6 +318,11 @@
                         if (task.done) {
                             this.xp += 15;
                             if (this.xp >= 100) { this.xp = 0; this.level++; }
+                            task.lastDoneDate = this.todayKey();
+                            // Completing a task is how you take care of the pet.
+                            this.petHunger = Math.min(100, this.petHunger + 12);
+                            this.petHappiness = Math.min(100, this.petHappiness + 6);
+                            this.updateStreak();
                         }
                         this.saveData();
                     }
@@ -192,6 +331,40 @@
                     this.tasks = this.tasks.filter(t => t.id !== id);
                     this.saveData();
                 },
+
+                // If every task is done for the first time today, bump the streak.
+                updateStreak() {
+                    const today = this.todayKey();
+                    if (this.lastStreakDate === today) return; // already counted today
+                    const allDone = this.tasks.length > 0 && this.tasks.every(t => t.done);
+                    if (!allDone) return;
+                    this.streak += 1;
+                    this.lastStreakDate = today;
+                },
+                // If a day was skipped entirely (no tasks completed yesterday), reset the streak.
+                checkStreakBreak() {
+                    if (!this.lastStreakDate) return;
+                    const last = new Date(this.lastStreakDate + 'T00:00:00');
+                    const today = new Date(this.todayKey() + 'T00:00:00');
+                    const diffDays = Math.round((today - last) / 86400000);
+                    if (diffDays > 1) { this.streak = 0; this.lastStreakDate = null; this.saveData(); }
+                },
+                // Daily/weekly tasks automatically un-check themselves once their
+                // period rolls over, so they reappear on your list to do again.
+                rolloverRecurringTasks() {
+                    const today = this.todayKey();
+                    const todayDate = new Date(today + 'T00:00:00');
+                    let changed = false;
+                    this.tasks.forEach(t => {
+                        if (!t.repeat || t.repeat === 'none' || !t.done || !t.lastDoneDate) return;
+                        const last = new Date(t.lastDoneDate + 'T00:00:00');
+                        const diffDays = Math.round((todayDate - last) / 86400000);
+                        if (t.repeat === 'daily' && diffDays >= 1) { t.done = false; changed = true; }
+                        if (t.repeat === 'weekly' && diffDays >= 7) { t.done = false; changed = true; }
+                    });
+                    if (changed) this.saveData();
+                },
+
                 initDate(date) {
                     if (!this.calendarEvents[date]) this.calendarEvents[date] = { list: [], links: [] };
                 },
@@ -231,58 +404,119 @@
                     this.gameScore = 0;
                     const canvas = document.getElementById('flyerCanvas');
                     const ctx = canvas.getContext('2d');
-                    
+
+                    // Cancel any previous loop so re-tapping "Start"/"Retry" doesn't stack loops
+                    if (this._flyerAnimId) cancelAnimationFrame(this._flyerAnimId);
+
+                    // Fixed logical game resolution; CSS/aspect-ratio scales it visually,
+                    // and we render at devicePixelRatio for crisp lines on retina screens.
+                    const W = 350, H = 500;
+                    const dpr = window.devicePixelRatio || 1;
+                    canvas.width = W * dpr;
+                    canvas.height = H * dpr;
+                    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
                     let bird = { x: 50, y: 150, w: 30, h: 30, gravity: 0.25, velocity: 0, jump: -4.5 };
                     let pipes = [];
                     let frame = 0;
-                    let animationId;
 
                     const spawnPipe = () => {
-                        const gap = 120;
+                        const gap = 130;
                         const minH = 50;
-                        const h = Math.floor(Math.random() * (canvas.height - gap - (minH * 2))) + minH;
-                        pipes.push({ x: canvas.width, y: 0, w: 40, h: h, type: 'top' });
-                        pipes.push({ x: canvas.width, y: h + gap, w: 40, h: canvas.height - h - gap, type: 'bottom' });
+                        const h = Math.floor(Math.random() * (H - gap - (minH * 2))) + minH;
+                        pipes.push({ x: W, y: 0, w: 40, h: h, type: 'top', passed: false });
+                        pipes.push({ x: W, y: h + gap, w: 40, h: H - h - gap, type: 'bottom', passed: true });
                     };
 
-                    const jump = () => { bird.velocity = bird.jump; };
+                    const jump = () => { if (this.gameState === 'playing') bird.velocity = bird.jump; };
                     canvas.onclick = jump;
                     canvas.ontouchstart = (e) => { e.preventDefault(); jump(); };
 
                     const loop = () => {
                         if (this.gameState !== 'playing') return;
-                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        ctx.clearRect(0, 0, W, H);
                         bird.velocity += bird.gravity;
                         bird.y += bird.velocity;
                         ctx.font = "30px Arial";
                         ctx.fillText(this.petEmoji, bird.x, bird.y + 25);
                         if (frame % 90 === 0) spawnPipe();
-                        pipes.forEach((p, i) => {
+                        for (let i = pipes.length - 1; i >= 0; i--) {
+                            const p = pipes[i];
                             p.x -= 2;
                             ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
                             ctx.fillRect(p.x, p.y, p.w, p.h);
-                            if (bird.x < p.x + p.w && bird.x + bird.w > p.x && bird.y < p.y + p.h && bird.y + bird.h > p.y) this.gameOver();
-                            if (p.x + p.w < 0) pipes.splice(i, 1);
-                            if (p.type === 'top' && p.x === bird.x) {
+                            if (bird.x < p.x + p.w && bird.x + bird.w > p.x && bird.y < p.y + p.h && bird.y + bird.h > p.y) { this.gameOver(); return; }
+                            if (p.type === 'top' && !p.passed && p.x + p.w < bird.x) {
+                                p.passed = true;
                                 this.gameScore++;
                                 if (this.gameScore > this.highScore) { this.highScore = this.gameScore; this.saveData(); }
                             }
-                        });
-                        if (bird.y + bird.h > canvas.height || bird.y < 0) this.gameOver();
+                            if (p.x + p.w < 0) pipes.splice(i, 1);
+                        }
+                        if (bird.y + bird.h > H || bird.y < 0) { this.gameOver(); return; }
                         frame++;
-                        animationId = requestAnimationFrame(loop);
+                        this._flyerAnimId = requestAnimationFrame(loop);
                     };
                     loop();
                 },
-                gameOver() { this.gameState = 'over'; },
+                gameOver() {
+                    this.gameState = 'over';
+                    if (this._flyerAnimId) cancelAnimationFrame(this._flyerAnimId);
+                },
 
                 calcInput(val) {
                     if (this.calcDisplay === '0') this.calcDisplay = val;
                     else this.calcDisplay += val;
                 },
+                requestCompassPermission() {
+                    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                        DeviceOrientationEvent.requestPermission().catch(() => {});
+                    }
+                },
+
+                setTimerPreset(minutes, label) {
+                    this.pauseTimer();
+                    this.timerTotal = minutes * 60;
+                    this.timerRemaining = minutes * 60;
+                    this.timerLabel = label;
+                },
+                startTimer() {
+                    if (this.timerRunning) return;
+                    this.timerRunning = true;
+                    this.timerInterval = setInterval(() => {
+                        if (this.timerRemaining <= 0) {
+                            this.pauseTimer();
+                            if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                            return;
+                        }
+                        this.timerRemaining--;
+                    }, 1000);
+                },
+                pauseTimer() {
+                    this.timerRunning = false;
+                    if (this.timerInterval) clearInterval(this.timerInterval);
+                    this.timerInterval = null;
+                },
+                resetTimer() {
+                    this.pauseTimer();
+                    this.timerRemaining = this.timerTotal;
+                },
+                timerDisplay() {
+                    const m = Math.floor(this.timerRemaining / 60).toString().padStart(2, '0');
+                    const s = Math.floor(this.timerRemaining % 60).toString().padStart(2, '0');
+                    return `${m}:${s}`;
+                },
+
                 calcClear() { this.calcDisplay = '0'; },
+                calcBackspace() {
+                    this.calcDisplay = this.calcDisplay.length > 1 ? this.calcDisplay.slice(0, -1) : '0';
+                },
                 calcResult() {
-                    try { this.calcDisplay = eval(this.calcDisplay.replace('×', '*').replace('÷', '/')).toString(); }
+                    try {
+                        const expr = this.calcDisplay.replace(/×/g, '*').replace(/÷/g, '/');
+                        if (!/^[0-9+\-*/().\s]+$/.test(expr)) throw new Error('invalid');
+                        this.calcDisplay = Function(`"use strict"; return (${expr})`)().toString();
+                    }
                     catch (e) { this.calcDisplay = 'Error'; }
                 },
                 async syncWithId() {
@@ -304,6 +538,24 @@
     </script>
 </head>
 <body x-data="evopals()" x-init="init()">
+
+    <div id="cdn-fallback" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.9); color:#fff; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:2rem; font-family:sans-serif; gap:1rem;">
+        <div style="font-size:3rem;">⚠️</div>
+        <h2 style="margin:0; font-weight:900;">Couldn't load required scripts</h2>
+        <p style="max-width:340px; opacity:0.8; font-size:0.9rem; line-height:1.5;">
+            This app needs an internet connection to load Tailwind, Alpine.js and Firebase from their CDNs.
+            Open this file directly in a regular browser (not a restricted preview), and make sure no
+            ad-blocker or firewall is blocking cdn.tailwindcss.com, unpkg.com, or gstatic.com.
+        </p>
+    </div>
+    <script>
+        setTimeout(function () {
+            if (typeof window.Alpine === 'undefined') {
+                var el = document.getElementById('cdn-fallback');
+                if (el) el.style.display = 'flex';
+            }
+        }, 4000);
+    </script>
 
     <div class="gradient-bg"></div>
 
@@ -339,12 +591,44 @@
             <div x-show="activeTab === 'planner'" class="space-y-6 pt-2">
                 <div class="glass p-8 rounded-[3rem] flex flex-col items-center text-center shadow-2xl relative overflow-hidden">
                     <div class="absolute top-0 right-0 p-4 opacity-10 text-4xl font-black italic">LVL <span x-text="level"></span></div>
-                    <div class="text-8xl float mb-4 drop-shadow-xl" x-text="petEmoji"></div>
-                    <h2 class="text-white text-3xl font-black italic tracking-tight" x-text="petName"></h2>
+                    <div class="relative">
+                        <div class="text-8xl float mb-4 drop-shadow-xl cursor-pointer select-none" @click="petTap()" x-text="petEmoji"></div>
+                        <template x-if="showHeartBurst">
+                            <div class="absolute inset-0 flex items-center justify-center text-3xl pointer-events-none" style="animation: heartFloat 0.8s ease-out forwards;">💕</div>
+                        </template>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-white text-3xl font-black italic tracking-tight" x-text="petName"></h2>
+                        <span x-show="evolutionStage().badge" x-text="evolutionStage().badge" class="text-xl"></span>
+                    </div>
+                    <p class="text-white/40 text-[9px] font-black uppercase tracking-widest mt-1" x-text="evolutionStage().label"></p>
                     <div class="w-full max-w-[200px] h-2.5 bg-white/10 rounded-full mt-6 overflow-hidden">
                         <div class="h-full bg-white transition-all duration-700 ease-out" :style="`width: ${xp}%`"></div>
                     </div>
+
+                    <div class="w-full max-w-[240px] mt-6 space-y-2.5">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm">🍗</span>
+                            <div class="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full transition-all duration-500" :class="petHunger < 30 ? 'bg-orange-400' : 'bg-white'" :style="`width: ${petHunger}%`"></div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm">💛</span>
+                            <div class="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full transition-all duration-500" :class="petHappiness < 30 ? 'bg-pink-400' : 'bg-white'" :style="`width: ${petHappiness}%`"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-white/25 text-[9px] font-bold uppercase tracking-widest mt-3">Tap your pal to say hi</p>
                 </div>
+
+                <template x-if="streak > 0">
+                    <div class="glass-gold px-6 py-3 rounded-[2rem] flex items-center justify-center gap-2">
+                        <span class="text-xl">🔥</span>
+                        <span class="text-white font-black text-sm" x-text="`${streak} day streak`"></span>
+                    </div>
+                </template>
 
                 <div class="glass p-6 rounded-[2.5rem] shadow-xl space-y-4">
                     <div class="flex justify-between items-center px-2">
@@ -390,7 +674,9 @@
                                     <div class="w-7 h-7 border-2 rounded-xl flex items-center justify-center transition-all" :class="task.done ? 'bg-white border-white' : 'border-white/20'">
                                         <template x-if="task.done"><span class="text-black text-[10px] font-black">✓</span></template>
                                     </div>
-                                    <span class="font-bold text-sm text-white" x-text="task.text"></span>
+                                    <span class="w-2 h-2 rounded-full shrink-0" :style="`background:${taskCategories[task.category || 'personal'].color}`"></span>
+                                    <span class="font-bold text-sm text-white flex-1" x-text="task.text"></span>
+                                    <span x-show="task.repeat && task.repeat !== 'none'" class="text-[8px] text-white/30 font-black uppercase tracking-widest shrink-0" x-text="task.repeat === 'daily' ? '↻ daily' : '↻ weekly'"></span>
                                 </div>
                                 <button @click="deleteTask(task.id)" class="text-white/10 hover:text-red-500 transition-colors p-2 font-black text-[9px]">X</button>
                             </div>
@@ -403,14 +689,18 @@
             <div x-show="activeTab === 'deck'" class="space-y-8 pt-2">
                 <section>
                     <h2 class="text-white text-3xl font-black italic mb-6 uppercase tracking-tighter">Tools</h2>
-                    <div class="grid grid-cols-2 gap-4">
-                        <button @click="activeTool = 'calc'" class="glass p-8 rounded-[2.5rem] flex flex-col items-center justify-center gap-4 group">
-                            <span class="text-5xl group-hover:scale-110 transition-transform">🔢</span>
-                            <span class="text-[10px] font-black uppercase text-white tracking-widest opacity-50">Calculator</span>
+                    <div class="grid grid-cols-3 gap-3">
+                        <button @click="activeTool = 'calc'" class="glass p-6 rounded-[2rem] flex flex-col items-center justify-center gap-3 group">
+                            <span class="text-4xl group-hover:scale-110 transition-transform">🔢</span>
+                            <span class="text-[9px] font-black uppercase text-white tracking-widest opacity-50 text-center">Calculator</span>
                         </button>
-                        <button @click="activeTool = 'compass'" class="glass p-8 rounded-[2.5rem] flex flex-col items-center justify-center gap-4 group">
-                            <span class="text-5xl group-hover:scale-110 transition-transform">🧭</span>
-                            <span class="text-[10px] font-black uppercase text-white tracking-widest opacity-50">Compass</span>
+                        <button @click="activeTool = 'compass'; requestCompassPermission()" class="glass p-6 rounded-[2rem] flex flex-col items-center justify-center gap-3 group">
+                            <span class="text-4xl group-hover:scale-110 transition-transform">🧭</span>
+                            <span class="text-[9px] font-black uppercase text-white tracking-widest opacity-50 text-center">Compass</span>
+                        </button>
+                        <button @click="activeTool = 'timer'" class="glass p-6 rounded-[2rem] flex flex-col items-center justify-center gap-3 group">
+                            <span class="text-4xl group-hover:scale-110 transition-transform">⏱️</span>
+                            <span class="text-[9px] font-black uppercase text-white tracking-widest opacity-50 text-center">Timer</span>
                         </button>
                     </div>
                 </section>
@@ -442,6 +732,21 @@
                         <p class="text-[11px] font-black text-white/40 uppercase tracking-widest">Name Your Companion</p>
                         <input x-model="petName" @blur="saveData()" class="w-full bg-white/5 border-2 border-white/10 p-5 rounded-2xl text-white text-center font-black text-2xl outline-none focus:border-cyan-500">
                     </div>
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center text-[10px] font-black text-white/40 uppercase tracking-widest">
+                            <span>Hunger</span><span x-text="`${Math.round(petHunger)}%`"></span>
+                        </div>
+                        <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden -mt-2">
+                            <div class="h-full transition-all duration-500" :class="petHunger < 30 ? 'bg-orange-400' : 'bg-white'" :style="`width: ${petHunger}%`"></div>
+                        </div>
+                        <div class="flex justify-between items-center text-[10px] font-black text-white/40 uppercase tracking-widest">
+                            <span>Happiness</span><span x-text="`${Math.round(petHappiness)}%`"></span>
+                        </div>
+                        <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden -mt-2">
+                            <div class="h-full transition-all duration-500" :class="petHappiness < 30 ? 'bg-pink-400' : 'bg-white'" :style="`width: ${petHappiness}%`"></div>
+                        </div>
+                        <p class="text-white/30 text-[9px] font-bold uppercase tracking-widest text-center pt-2">Complete routines to feed & tap to play</p>
+                    </div>
                 </div>
                 <div class="glass-gold p-8 rounded-[3rem] relative overflow-hidden group">
                     <div class="absolute top-4 right-4 bg-yellow-400 text-black text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-tighter shadow-lg">Premium Only</div>
@@ -457,7 +762,7 @@
             </div>
         </main>
 
-        <nav class="fixed bottom-6 left-6 right-6 glass p-2.5 rounded-[3rem] flex gap-2.5 z-[100] shadow-2xl">
+        <nav class="app-nav fixed bottom-6 left-6 right-6 glass p-2.5 rounded-[3rem] flex gap-2.5 z-[100] shadow-2xl">
             <button @click="activeTab = 'planner'" :class="activeTab === 'planner' ? 'nav-active' : 'text-white/40'" class="flex-1 py-5 rounded-[2.5rem] flex flex-col items-center gap-1.5 transition-all">
                 <span class="text-2xl">🏠</span>
                 <span class="text-[9px] font-black uppercase tracking-tighter">Home</span>
@@ -471,6 +776,204 @@
                 <span class="text-[9px] font-black uppercase tracking-tighter">Lab</span>
             </button>
         </nav>
+
+        <!-- ADD TASK MODAL -->
+        <div x-show="showTaskModal" x-cloak class="fixed inset-0 z-[700] bg-black/95 flex items-end sm:items-center justify-center p-6" @click="showTaskModal = false">
+            <div class="glass w-full max-w-sm p-8 rounded-[3rem] space-y-6" @click.stop>
+                <h3 class="text-white text-2xl font-black italic tracking-tighter uppercase text-center">New Routine</h3>
+                <input x-model="newTaskText" @keyup.enter="addTask()" placeholder="e.g. Drink water" autofocus
+                       class="w-full bg-white/5 border-2 border-white/10 p-5 rounded-2xl text-white text-center font-bold outline-none focus:border-cyan-500">
+
+                <div class="space-y-2">
+                    <p class="text-white/40 text-[9px] font-black uppercase tracking-widest text-center">Category</p>
+                    <div class="flex gap-2 justify-center flex-wrap">
+                        <template x-for="(cat, key) in taskCategories" :key="key">
+                            <button @click="newTaskCategory = key"
+                                    class="px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 transition-all"
+                                    :class="newTaskCategory === key ? 'bg-white text-black' : 'glass text-white/60'">
+                                <span class="w-2 h-2 rounded-full" :style="`background:${cat.color}`"></span>
+                                <span x-text="cat.label"></span>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <p class="text-white/40 text-[9px] font-black uppercase tracking-widest text-center">Repeat</p>
+                    <div class="flex gap-2 justify-center">
+                        <template x-for="opt in [['none','Once'],['daily','Daily'],['weekly','Weekly']]" :key="opt[0]">
+                            <button @click="newTaskRepeat = opt[0]"
+                                    class="px-4 py-2 rounded-xl text-[10px] font-black uppercase"
+                                    :class="newTaskRepeat === opt[0] ? 'bg-white text-black' : 'glass text-white/60'"
+                                    x-text="opt[1]"></button>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="flex gap-3">
+                    <button @click="showTaskModal = false; newTaskText = ''" class="flex-1 py-4 glass rounded-2xl text-white/60 font-black text-xs uppercase">Cancel</button>
+                    <button @click="addTask()" class="flex-1 py-4 bg-white text-black rounded-2xl font-black text-xs uppercase active:scale-95 transition-transform">Add</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- CALENDAR EVENT MODAL -->
+        <div x-show="showEventModal" x-cloak class="fixed inset-0 z-[700] bg-black/95 flex items-end sm:items-center justify-center p-6" @click="showEventModal = false">
+            <div class="glass w-full max-w-sm p-8 rounded-[3rem] space-y-6 max-h-[85vh] overflow-y-auto no-scrollbar" @click.stop>
+                <h3 class="text-white text-2xl font-black italic tracking-tighter uppercase text-center" x-text="newEventDate"></h3>
+
+                <div class="space-y-3">
+                    <h4 class="text-white/40 text-[10px] font-black uppercase tracking-widest">Checklist</h4>
+                    <template x-if="calendarEvents[newEventDate]">
+                        <div class="space-y-2">
+                            <template x-for="(item, index) in calendarEvents[newEventDate].list" :key="index">
+                                <div class="bg-white/5 p-4 rounded-2xl flex items-center justify-between">
+                                    <div class="flex items-center gap-3 flex-1" @click="toggleCalItem(newEventDate, index)">
+                                        <div class="w-5 h-5 border-2 rounded-lg flex items-center justify-center" :class="item.done ? 'bg-white border-white' : 'border-white/20'">
+                                            <template x-if="item.done"><span class="text-black text-[8px] font-black">✓</span></template>
+                                        </div>
+                                        <span class="text-white text-sm font-bold" :class="item.done ? 'line-through opacity-40' : ''" x-text="item.text"></span>
+                                    </div>
+                                    <button @click="removeCalItem(newEventDate, index)" class="text-white/20 px-2 font-black text-[9px]">X</button>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                    <div class="flex gap-2">
+                        <input x-model="newEventItem" @keyup.enter="addCalendarListItem()" placeholder="Add item"
+                               class="flex-1 bg-white/5 border-2 border-white/10 p-4 rounded-2xl text-white text-sm font-bold outline-none focus:border-cyan-500">
+                        <button @click="addCalendarListItem()" class="px-5 bg-white text-black rounded-2xl font-black text-xs uppercase">Add</button>
+                    </div>
+                </div>
+
+                <div class="space-y-3">
+                    <h4 class="text-white/40 text-[10px] font-black uppercase tracking-widest">Links</h4>
+                    <template x-if="calendarEvents[newEventDate]">
+                        <div class="space-y-2">
+                            <template x-for="(link, index) in calendarEvents[newEventDate].links" :key="index">
+                                <div class="bg-white/5 p-4 rounded-2xl flex items-center justify-between gap-2">
+                                    <a :href="link" target="_blank" rel="noopener" class="text-cyan-400 text-xs font-bold truncate flex-1" x-text="link"></a>
+                                    <button @click="removeCalLink(newEventDate, index)" class="text-white/20 px-2 font-black text-[9px] shrink-0">X</button>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                    <div class="flex gap-2">
+                        <input x-model="newEventLink" @keyup.enter="addCalendarLink()" placeholder="Paste a link" inputmode="url"
+                               class="flex-1 bg-white/5 border-2 border-white/10 p-4 rounded-2xl text-white text-sm font-bold outline-none focus:border-cyan-500">
+                        <button @click="addCalendarLink()" class="px-5 bg-white text-black rounded-2xl font-black text-xs uppercase">Add</button>
+                    </div>
+                </div>
+
+                <button @click="showEventModal = false" class="w-full text-white/40 font-black text-[10px] uppercase tracking-widest pt-2">Done</button>
+            </div>
+        </div>
+
+        <!-- ACCOUNT / ID MODAL -->
+        <div x-show="showIdModal" x-cloak class="fixed inset-0 z-[700] bg-black/95 flex items-end sm:items-center justify-center p-6" @click="showIdModal = false">
+            <div class="glass w-full max-w-sm p-8 rounded-[3rem] space-y-6" @click.stop>
+                <h3 class="text-white text-2xl font-black italic tracking-tighter uppercase text-center">Account</h3>
+                <div class="space-y-2">
+                    <p class="text-white/40 text-[9px] font-black uppercase tracking-widest text-center">Your Device ID</p>
+                    <div class="bg-white/5 p-4 rounded-2xl flex items-center justify-between gap-3">
+                        <span class="text-white text-xs font-bold truncate" x-text="userId || 'Not connected'"></span>
+                        <button @click="copyId()" class="text-cyan-400 font-black text-[10px] uppercase shrink-0">Copy</button>
+                    </div>
+                    <p class="text-white/30 text-[9px] font-medium text-center">Save this ID to restore your pal on another device.</p>
+                </div>
+                <div class="space-y-2">
+                    <p class="text-white/40 text-[9px] font-black uppercase tracking-widest text-center">Restore From ID</p>
+                    <input x-model="tempId" placeholder="Paste device ID"
+                           class="w-full bg-white/5 border-2 border-white/10 p-4 rounded-2xl text-white text-center text-xs font-bold outline-none focus:border-cyan-500">
+                    <button @click="syncWithId()" class="w-full py-4 bg-white text-black rounded-2xl font-black text-xs uppercase active:scale-95 transition-transform">Restore</button>
+                </div>
+                <button @click="showIdModal = false" class="w-full text-white/40 font-black text-[10px] uppercase tracking-widest pt-2">Close</button>
+            </div>
+        </div>
+
+        <!-- TOOL / GAME OVERLAY -->
+        <div x-show="activeTool" x-cloak class="fixed inset-0 z-[700] bg-black flex flex-col" @keydown.window.escape="activeTool = null">
+            <div class="gradient-bg opacity-30"></div>
+            <div class="flex items-center justify-between p-6 pt-8 relative" style="padding-top: max(2rem, calc(env(safe-area-inset-top) + 1rem));">
+                <h3 class="text-white font-black italic text-xl uppercase tracking-tighter" x-text="activeTool === 'calc' ? 'Calculator' : activeTool === 'compass' ? 'Compass' : activeTool === 'timer' ? 'Timer' : 'Evo-Flyer'"></h3>
+                <button @click="activeTool = null; gameState = 'menu'; pauseTimer()" class="glass w-10 h-10 rounded-full flex items-center justify-center text-white font-black">✕</button>
+            </div>
+
+            <!-- CALCULATOR -->
+            <div x-show="activeTool === 'calc'" class="flex-1 flex flex-col justify-end p-6 gap-4 relative">
+                <div class="glass p-6 rounded-[2rem] text-right">
+                    <span class="text-white text-5xl font-black italic break-all" x-text="calcDisplay"></span>
+                </div>
+                <div class="grid grid-cols-4 gap-3">
+                    <template x-for="btn in ['C','(',')','÷','7','8','9','×','4','5','6','-','1','2','3','+','0','.','⌫','=']">
+                        <button
+                            class="glass py-6 rounded-2xl text-white font-black text-xl active:scale-95 transition-transform"
+                            :class="btn === '=' ? 'bg-white text-black' : ''"
+                            @click="btn === 'C' ? calcClear() : btn === '=' ? calcResult() : btn === '⌫' ? calcBackspace() : calcInput(btn)"
+                            x-text="btn"></button>
+                    </template>
+                </div>
+            </div>
+
+            <!-- COMPASS -->
+            <div x-show="activeTool === 'compass'"
+                 class="flex-1 flex flex-col items-center justify-center gap-10 p-6">
+                <div class="relative w-64 h-64 glass rounded-full flex items-center justify-center">
+                    <div class="absolute inset-4 rounded-full border border-white/10 flex items-center justify-center text-white/30 font-black text-xs">
+                        <span class="absolute top-3">N</span>
+                        <span class="absolute bottom-3">S</span>
+                        <span class="absolute left-3">W</span>
+                        <span class="absolute right-3">E</span>
+                    </div>
+                    <div class="text-6xl transition-transform duration-200" :style="`transform: rotate(${-compassHeading}deg)`">🧭</div>
+                </div>
+                <p class="text-white font-black text-3xl italic" x-text="`${Math.round(compassHeading)}°`"></p>
+                <p class="text-white/40 text-[10px] font-bold uppercase tracking-widest text-center px-8">Move your phone in a figure-8 if the reading seems off</p>
+            </div>
+
+            <!-- TIMER -->
+            <div x-show="activeTool === 'timer'" class="flex-1 flex flex-col items-center justify-center gap-10 p-6">
+                <p class="text-white/40 text-[10px] font-black uppercase tracking-widest" x-text="timerLabel"></p>
+                <div class="relative w-64 h-64 glass rounded-full flex items-center justify-center">
+                    <span class="text-white text-5xl font-black italic tabular-nums" x-text="timerDisplay()"></span>
+                </div>
+                <div class="flex gap-2">
+                    <button @click="setTimerPreset(5, 'Break')" class="glass px-4 py-2 rounded-xl text-white/60 text-[10px] font-black uppercase">5m</button>
+                    <button @click="setTimerPreset(15, 'Short Focus')" class="glass px-4 py-2 rounded-xl text-white/60 text-[10px] font-black uppercase">15m</button>
+                    <button @click="setTimerPreset(25, 'Focus')" class="glass px-4 py-2 rounded-xl text-white/60 text-[10px] font-black uppercase">25m</button>
+                    <button @click="setTimerPreset(45, 'Deep Focus')" class="glass px-4 py-2 rounded-xl text-white/60 text-[10px] font-black uppercase">45m</button>
+                </div>
+                <div class="flex gap-3">
+                    <button @click="resetTimer()" class="px-8 py-4 glass rounded-2xl text-white/60 font-black text-xs uppercase">Reset</button>
+                    <button @click="timerRunning ? pauseTimer() : startTimer()" class="px-10 py-4 bg-white text-black rounded-2xl font-black text-xs uppercase active:scale-95 transition-transform" x-text="timerRunning ? 'Pause' : 'Start'"></button>
+                </div>
+            </div>
+
+            <!-- EVO-FLYER GAME -->
+            <div x-show="activeTool === 'flyer'" class="flex-1 flex flex-col items-center justify-center p-4 relative">
+                <div class="relative w-full max-w-[350px] mx-auto">
+                    <canvas id="flyerCanvas" width="350" height="500" class="w-full glass rounded-[2rem] shadow-2xl" style="aspect-ratio: 350 / 500;"></canvas>
+
+                    <div x-show="gameState === 'menu'" class="absolute inset-0 flex flex-col items-center justify-center gap-6 rounded-[2rem] bg-black/60">
+                        <div class="text-7xl" x-text="petEmoji"></div>
+                        <p class="text-white/50 text-[10px] font-black uppercase tracking-widest">High Score: <span x-text="highScore"></span></p>
+                        <button @click="startFlyer()" class="px-10 py-4 bg-white text-black rounded-2xl font-black text-xs uppercase active:scale-95 transition-transform">Tap to Start</button>
+                    </div>
+
+                    <div x-show="gameState === 'playing'" class="absolute top-4 left-0 right-0 text-center pointer-events-none">
+                        <span class="text-white text-4xl font-black italic drop-shadow-lg" x-text="gameScore"></span>
+                    </div>
+
+                    <div x-show="gameState === 'over'" class="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-[2rem] bg-black/70">
+                        <p class="text-white font-black text-2xl italic uppercase">Game Over</p>
+                        <p class="text-white/60 text-sm font-bold">Score: <span x-text="gameScore"></span></p>
+                        <p class="text-white/40 text-[10px] font-black uppercase tracking-widest">Best: <span x-text="highScore"></span></p>
+                        <button @click="startFlyer()" class="px-10 py-4 bg-white text-black rounded-2xl font-black text-xs uppercase active:scale-95 transition-transform">Retry</button>
+                    </div>
+                </div>
+                <p class="text-white/30 text-[10px] font-bold uppercase tracking-widest text-center mt-6">Tap the screen to fly</p>
+            </div>
+        </div>
 
         <div x-show="showSyncModal" class="fixed inset-0 z-[700] bg-black/95 flex items-center justify-center p-6" @click="showSyncModal = false">
             <div class="glass-sync w-full max-w-sm p-10 rounded-[3.5rem] text-center space-y-8" @click.stop>
